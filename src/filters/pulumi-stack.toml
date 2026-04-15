@@ -1,0 +1,47 @@
+[filters.pulumi-stack]
+description = "Compact Pulumi stack (ls/output) output"
+match_command = "^pulumi\\s+stack(\\s|$)"
+strip_ansi = true
+match_output = [
+  { pattern = "No stacks found", message = "pulumi stack: empty" },
+]
+strip_lines_matching = [
+  "^\\s*$",
+  "^Please choose a stack",
+  "^Current stack is",
+  "^\\s*Owner:",
+  "^\\s*Last updated:",
+  "^\\s*Pulumi version used:",
+  "^More information at:",
+  "^Use `pulumi ",
+  "^Current stack outputs \\(0\\):",
+  "^\\s+No output values currently",
+]
+max_lines = 40
+on_empty = "pulumi stack: ok"
+
+[[tests.pulumi-stack]]
+name = "no stacks short-circuits"
+input = "No stacks found in the current workspace.\n"
+expected = "pulumi stack: empty"
+
+[[tests.pulumi-stack]]
+name = "strips metadata noise, keeps table"
+input = """
+Please choose a stack, or create a new one:
+Current stack is dev:
+    Owner: my-org
+    Last updated: 2 hours ago
+    Pulumi version used: v3.120.0
+
+Current stack resources (3):
+    TYPE                          NAME
+    pulumi:pulumi:Stack           my-proj-dev
+    aws:s3:Bucket                 my-bucket
+    aws:iam:Role                  my-role
+"""
+expected = """Current stack resources (3):
+    TYPE                          NAME
+    pulumi:pulumi:Stack           my-proj-dev
+    aws:s3:Bucket                 my-bucket
+    aws:iam:Role                  my-role"""

@@ -229,6 +229,15 @@ rtk kubectl logs <pod>          # Deduplicated logs
 rtk kubectl services            # Compact service list
 ```
 
+### Infrastructure as Code
+```bash
+rtk pulumi preview              # Strip header/URL/duration noise
+rtk pulumi up                   # Compact apply output
+rtk pulumi destroy              # Compact destroy output
+rtk pulumi refresh              # Drift summary
+rtk pulumi stack                # Stack metadata (strips owner/timestamps)
+```
+
 ### Data & Analytics
 ```bash
 rtk json config.json            # Structure without values
