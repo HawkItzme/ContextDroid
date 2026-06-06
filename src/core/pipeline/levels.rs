@@ -1,4 +1,5 @@
-//! User-facing aggressivity per layer, resolved once from env/config.
+//! Per-layer aggressivity and the fallback exclude list, resolved once from
+//! env/config.
 
 use super::decorative::DecorativeLevel;
 
@@ -7,23 +8,51 @@ pub struct Levels {
     pub decorative: DecorativeLevel,
 }
 
-/// Resolved once and cached: many call sites read levels, but config is read
-/// from disk at most once to protect the <10ms startup budget.
-pub fn current() -> &'static Levels {
-    use std::sync::OnceLock;
-    static LEVELS: OnceLock<Levels> = OnceLock::new();
-    LEVELS.get_or_init(resolve)
+// Raw-output commands: their content must stay byte-exact, so the global
+// fallback pipeline never touches them. Users extend this via [levels].exclude.
+const BUILTIN_EXCLUDE: &[&str] = &[
+    "cat", "head", "tail", "base64", "xxd", "hexdump", "od", "strings", "dd",
+];
+
+struct Resolved {
+    levels: Levels,
+    exclude: Vec<String>,
 }
 
-fn resolve() -> Levels {
+fn resolved() -> &'static Resolved {
+    use std::sync::OnceLock;
+    static RESOLVED: OnceLock<Resolved> = OnceLock::new();
+    RESOLVED.get_or_init(resolve)
+}
+
+fn resolve() -> Resolved {
+    let config = crate::core::config::Config::load().ok();
     let decorative = std::env::var("RTK_DECORATIVE")
         .ok()
         .and_then(|v| DecorativeLevel::parse(&v))
         .or_else(|| {
-            crate::core::config::Config::load()
-                .ok()
+            config
+                .as_ref()
                 .and_then(|c| DecorativeLevel::parse(&c.levels.decorative))
         })
         .unwrap_or_default();
-    Levels { decorative }
+
+    let mut exclude: Vec<String> = BUILTIN_EXCLUDE.iter().map(|s| s.to_string()).collect();
+    if let Some(c) = &config {
+        exclude.extend(c.levels.exclude.iter().cloned());
+    }
+
+    Resolved {
+        levels: Levels { decorative },
+        exclude,
+    }
+}
+
+/// Resolved levels, cached to keep config off the hot path (<10ms startup).
+pub fn current() -> &'static Levels {
+    &resolved().levels
+}
+
+pub fn is_excluded(command: &str) -> bool {
+    resolved().exclude.iter().any(|c| c == command)
 }

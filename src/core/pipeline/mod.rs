@@ -5,6 +5,8 @@
 mod decorative;
 mod levels;
 
+pub use levels::is_excluded;
+
 use crate::core::stream::StreamFilter;
 
 /// Per-command, code-level choice of which generic layers run before the

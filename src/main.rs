@@ -1166,16 +1166,14 @@ fn run_fallback(parse_error: clap::Error) -> Result<i32> {
 
     // TOML filter lookup — bypass with RTK_NO_TOML=1
     // Use basename of args[0] so absolute paths (/usr/bin/make) still match "^make\b".
-    let lookup_cmd = {
-        let base = std::path::Path::new(&args[0])
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| args[0].clone());
-        std::iter::once(base.as_str())
-            .chain(args[1..].iter().map(|s| s.as_str()))
-            .collect::<Vec<_>>()
-            .join(" ")
-    };
+    let base = std::path::Path::new(&args[0])
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| args[0].clone());
+    let lookup_cmd = std::iter::once(base.as_str())
+        .chain(args[1..].iter().map(|s| s.as_str()))
+        .collect::<Vec<_>>()
+        .join(" ");
     let toml_match = if std::env::var("RTK_NO_TOML").ok().as_deref() == Some("1") {
         None
     } else {
@@ -1244,8 +1242,10 @@ fn run_fallback(parse_error: clap::Error) -> Result<i32> {
                 Ok(127)
             }
         }
-    } else if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
-        // Terminal: passthrough so interactive apps and color work.
+    } else if core::pipeline::is_excluded(&base)
+        || std::io::IsTerminal::is_terminal(&std::io::stdout())
+    {
+        // Excluded (raw-output commands) or a terminal: passthrough untouched.
         let status = core::utils::resolved_command(&args[0])
             .args(&args[1..])
             .stdin(std::process::Stdio::inherit())

@@ -152,16 +152,25 @@ pub fn limits() -> LimitsConfig {
     Config::load().map(|c| c.limits).unwrap_or_default()
 }
 
+fn default_decorative() -> String {
+    "reasonable".to_string()
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LevelsConfig {
     /// `light` | `reasonable` | `high`
+    #[serde(default = "default_decorative")]
     pub decorative: String,
+    /// Extra commands excluded from the global fallback pipeline (raw passthrough).
+    #[serde(default)]
+    pub exclude: Vec<String>,
 }
 
 impl Default for LevelsConfig {
     fn default() -> Self {
         Self {
-            decorative: "reasonable".to_string(),
+            decorative: default_decorative(),
+            exclude: Vec::new(),
         }
     }
 }
