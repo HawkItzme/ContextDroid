@@ -21,6 +21,8 @@ pub struct Config {
     pub hooks: HooksConfig,
     #[serde(default)]
     pub limits: LimitsConfig,
+    #[serde(default)]
+    pub levels: LevelsConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -148,6 +150,20 @@ impl Default for LimitsConfig {
 /// Get limits config. Falls back to defaults if config can't be loaded.
 pub fn limits() -> LimitsConfig {
     Config::load().map(|c| c.limits).unwrap_or_default()
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LevelsConfig {
+    /// `light` | `reasonable` | `high`
+    pub decorative: String,
+}
+
+impl Default for LevelsConfig {
+    fn default() -> Self {
+        Self {
+            decorative: "reasonable".to_string(),
+        }
+    }
 }
 
 impl Config {

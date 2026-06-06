@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use std::process::Command;
 
+use crate::core::pipeline::{Layers, Pipeline};
 use crate::core::stream::{self, FilterMode, StdinMode, StreamFilter};
 use crate::core::tracking;
 
@@ -24,6 +25,8 @@ pub struct RunOptions<'a> {
     /// can read from a pipe (e.g. `cat file | rtk wc`); without it the child
     /// gets an empty stdin and reports zero.
     pub inherit_stdin: bool,
+    /// Generic layers applied before the command's own filter. Default = all on.
+    pub layers: Layers,
 }
 
 impl<'a> RunOptions<'a> {
@@ -111,7 +114,8 @@ where
     } else {
         raw
     };
-    let filtered = filter_fn(text_to_filter, exit_code);
+    let filtered =
+        Pipeline::for_layers(opts.layers).run(text_to_filter, |s| filter_fn(s, exit_code));
 
     if let Some(label) = opts.tee_label {
         print_with_hint(&filtered, raw, label, exit_code);
@@ -163,6 +167,7 @@ pub fn run(
             timer,
         ),
         RunMode::Streamed(filter) => {
+            let filter = Pipeline::for_layers(opts.layers).stream(filter);
             let result =
                 stream::run_streaming(&mut cmd, StdinMode::Null, FilterMode::Streaming(filter))
                     .with_context(|| format!("Failed to run {}", tool_name))?;
