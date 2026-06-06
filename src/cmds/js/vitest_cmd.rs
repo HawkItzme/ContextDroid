@@ -206,16 +206,15 @@ fn extract_failures_regex(output: &str) -> Vec<TestFailure> {
 
 pub fn run_test(command: &Commands, args: &[String], verbose: u8) -> Result<i32> {
     let timer = tracking::TimedExecution::start();
+    let mut passthrough_requested = false;
 
     let (framework, mut cmd) = match command {
         Commands::Vitest { .. } => {
             let framework = "vitest";
             let mut cmd = package_manager_exec(framework);
-            cmd
-                // Force non-watch mode
-                .arg("run")
-                // Enable JSON structured output
-                .arg("--reporter=json");
+            let effective_args = build_vitest_effective_args(args);
+            passthrough_requested = effective_args.passthrough;
+            cmd.args(effective_args.args);
             (framework, cmd)
         }
         Commands::Jest { .. } => {
@@ -231,42 +230,23 @@ pub fn run_test(command: &Commands, args: &[String], verbose: u8) -> Result<i32>
         _ => unreachable!(),
     };
 
-    for arg in args {
-        if arg == "run"
-            || arg.starts_with("--json")
-            || arg.starts_with("--reporter")
-            || arg.starts_with("--watch")
-        {
-            continue;
+    if !matches!(command, Commands::Vitest { .. }) {
+        for arg in args {
+            if arg == "run"
+                || arg.starts_with("--json")
+                || arg.starts_with("--reporter")
+                || arg.starts_with("--watch")
+            {
+                continue;
+            }
+            cmd.arg(arg);
         }
-        cmd.arg(arg);
     }
 
     let result = exec_capture(&mut cmd).context(format!("Failed to run {}", framework))?;
     let combined = result.combined();
 
-    // Parse output using VitestParser
-    let parse_result = VitestParser::parse(&result.stdout);
-    let mode = FormatMode::from_verbosity(verbose);
-
-    let filtered = match parse_result {
-        ParseResult::Full(data) => {
-            if verbose > 0 {
-                eprintln!("{} run (Tier 1: Full JSON parse)", framework);
-            }
-            data.format(mode)
-        }
-        ParseResult::Degraded(data, warnings) => {
-            if verbose > 0 {
-                emit_degradation_warning(framework, &warnings.join(", "));
-            }
-            data.format(mode)
-        }
-        ParseResult::Passthrough(raw) => {
-            emit_passthrough_warning(framework, "All parsing tiers failed");
-            raw
-        }
-    };
+    let filtered = format_test_output(framework, &result.stdout, &combined, passthrough_requested, verbose);
 
     if let Some(hint) =
         crate::core::tee::tee_and_hint(&combined, format!("{}_run", framework).as_str(), result.exit_code)
@@ -289,9 +269,83 @@ pub fn run_test(command: &Commands, args: &[String], verbose: u8) -> Result<i32>
     Ok(0)
 }
 
+struct EffectiveVitestArgs {
+    args: Vec<String>,
+    passthrough: bool,
+}
+
+fn build_vitest_effective_args(args: &[String]) -> EffectiveVitestArgs {
+    let passthrough = has_explicit_vitest_reporter(args);
+    let mut effective = vec!["run".to_string()];
+
+    if !passthrough {
+        effective.push("--reporter=json".to_string());
+    }
+
+    for arg in args {
+        if should_skip_vitest_arg(arg) {
+            continue;
+        }
+        effective.push(arg.clone());
+    }
+
+    EffectiveVitestArgs {
+        args: effective,
+        passthrough,
+    }
+}
+
+fn has_explicit_vitest_reporter(args: &[String]) -> bool {
+    args.iter()
+        .any(|arg| arg == "--reporter" || arg.starts_with("--reporter="))
+}
+
+fn should_skip_vitest_arg(arg: &str) -> bool {
+    arg == "run" || arg.starts_with("--json") || arg.starts_with("--watch")
+}
+
+fn format_test_output(
+    framework: &str,
+    stdout: &str,
+    combined: &str,
+    passthrough_requested: bool,
+    verbose: u8,
+) -> String {
+    if passthrough_requested {
+        return truncate_passthrough(combined);
+    }
+
+    let parse_result = VitestParser::parse(stdout);
+    let mode = FormatMode::from_verbosity(verbose);
+    let filtered = match parse_result {
+        ParseResult::Full(data) => {
+            if verbose > 0 {
+                eprintln!("{} run (Tier 1: Full JSON parse)", framework);
+            }
+            data.format(mode)
+        }
+        ParseResult::Degraded(data, warnings) => {
+            if verbose > 0 {
+                emit_degradation_warning(framework, &warnings.join(", "));
+            }
+            data.format(mode)
+        }
+        ParseResult::Passthrough(raw) => {
+            emit_passthrough_warning(framework, "All parsing tiers failed");
+            raw
+        }
+    };
+
+    filtered
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
+    }
 
     #[test]
     fn test_vitest_parser_json() {
@@ -396,5 +450,58 @@ Scope: all 6 workspace projects
         let data = result.unwrap();
         assert_eq!(data.total, 2);
         assert_eq!(data.passed, 2);
+    }
+
+    #[test]
+    fn test_vitest_effective_args_inject_json_reporter_by_default() {
+        let effective = build_vitest_effective_args(&args(&["run", "constants.test.ts", "--watch"]));
+
+        assert!(!effective.passthrough);
+        assert_eq!(
+            effective.args,
+            args(&["run", "--reporter=json", "constants.test.ts"])
+        );
+    }
+
+    #[test]
+    fn test_vitest_effective_args_preserve_explicit_reporter_equals() {
+        let effective =
+            build_vitest_effective_args(&args(&["constants.test.ts", "--reporter=verbose"]));
+
+        assert!(effective.passthrough);
+        assert_eq!(
+            effective.args,
+            args(&["run", "constants.test.ts", "--reporter=verbose"])
+        );
+    }
+
+    #[test]
+    fn test_vitest_effective_args_preserve_explicit_reporter_value() {
+        let effective =
+            build_vitest_effective_args(&args(&["run", "constants.test.ts", "--reporter", "verbose"]));
+
+        assert!(effective.passthrough);
+        assert_eq!(
+            effective.args,
+            args(&["run", "constants.test.ts", "--reporter", "verbose"])
+        );
+    }
+
+    #[test]
+    fn test_vitest_explicit_reporter_keeps_verbose_output() {
+        let output = r#"
+ ✓ constants/publicPaths.test.ts > public paths > keeps docs path
+ ✓ constants/publicPaths.test.ts > public paths > keeps app path
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Duration  450ms
+"#;
+
+        let filtered = format_test_output("vitest", output, output, true, 0);
+
+        assert!(filtered.contains("keeps docs path"));
+        assert!(filtered.contains("keeps app path"));
+        assert!(filtered.contains("Tests  2 passed"));
     }
 }
