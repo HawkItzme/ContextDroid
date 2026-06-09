@@ -1,15 +1,11 @@
 //! Summarizes project dependencies from lock files and manifests.
 
 use crate::core::tracking;
-use crate::core::truncate::{reduced, CAP_WARNINGS};
+use crate::core::truncate::{caps, reduced};
 use anyhow::Result;
 use regex::Regex;
 use std::fs;
 use std::path::Path;
-
-const MAX_DEPS: usize = CAP_WARNINGS;
-// dev deps are secondary to prod — show fewer.
-const MAX_DEV_DEPS: usize = reduced(CAP_WARNINGS, 5);
 
 /// Summarize project dependencies
 pub fn run(path: &Path, verbose: u8) -> Result<()> {
@@ -79,6 +75,9 @@ pub fn run(path: &Path, verbose: u8) -> Result<()> {
 }
 
 fn summarize_cargo_str(path: &Path) -> Result<String> {
+    let max_deps = caps().warnings;
+    // dev deps are secondary to prod — show fewer.
+    let max_dev_deps = reduced(caps().warnings, 5);
     let content = fs::read_to_string(path)?;
     let dep_re =
         Regex::new(r#"^([a-zA-Z0-9_-]+)\s*=\s*(?:"([^"]+)"|.*version\s*=\s*"([^"]+)")"#).unwrap();
@@ -112,26 +111,28 @@ fn summarize_cargo_str(path: &Path) -> Result<String> {
 
     if !deps.is_empty() {
         out.push_str(&format!("  Dependencies ({}):\n", deps.len()));
-        for d in deps.iter().take(MAX_DEPS) {
+        for d in deps.iter().take(max_deps) {
             out.push_str(&format!("    {}\n", d));
         }
-        if deps.len() > MAX_DEPS {
-            out.push_str(&format!("    ... +{} more\n", deps.len() - MAX_DEPS));
+        if deps.len() > max_deps {
+            out.push_str(&format!("    ... +{} more\n", deps.len() - max_deps));
         }
     }
     if !dev_deps.is_empty() {
         out.push_str(&format!("  Dev ({}):\n", dev_deps.len()));
-        for d in dev_deps.iter().take(MAX_DEV_DEPS) {
+        for d in dev_deps.iter().take(max_dev_deps) {
             out.push_str(&format!("    {}\n", d));
         }
-        if dev_deps.len() > MAX_DEV_DEPS {
-            out.push_str(&format!("    ... +{} more\n", dev_deps.len() - MAX_DEV_DEPS));
+        if dev_deps.len() > max_dev_deps {
+            out.push_str(&format!("    ... +{} more\n", dev_deps.len() - max_dev_deps));
         }
     }
     Ok(out)
 }
 
 fn summarize_package_json_str(path: &Path) -> Result<String> {
+    let max_deps = caps().warnings;
+    let max_dev_deps = reduced(caps().warnings, 5);
     let content = fs::read_to_string(path)?;
     let json: serde_json::Value = serde_json::from_str(&content)?;
     let mut out = String::new();
@@ -143,8 +144,8 @@ fn summarize_package_json_str(path: &Path) -> Result<String> {
     if let Some(deps) = json.get("dependencies").and_then(|v| v.as_object()) {
         out.push_str(&format!("  Dependencies ({}):\n", deps.len()));
         for (i, (name, version)) in deps.iter().enumerate() {
-            if i >= MAX_DEPS {
-                out.push_str(&format!("    ... +{} more\n", deps.len() - MAX_DEPS));
+            if i >= max_deps {
+                out.push_str(&format!("    ... +{} more\n", deps.len() - max_deps));
                 break;
             }
             out.push_str(&format!(
@@ -157,8 +158,8 @@ fn summarize_package_json_str(path: &Path) -> Result<String> {
     if let Some(dev_deps) = json.get("devDependencies").and_then(|v| v.as_object()) {
         out.push_str(&format!("  Dev Dependencies ({}):\n", dev_deps.len()));
         for (i, (name, _)) in dev_deps.iter().enumerate() {
-            if i >= MAX_DEV_DEPS {
-                out.push_str(&format!("    ... +{} more\n", dev_deps.len() - MAX_DEV_DEPS));
+            if i >= max_dev_deps {
+                out.push_str(&format!("    ... +{} more\n", dev_deps.len() - max_dev_deps));
                 break;
             }
             out.push_str(&format!("    {}\n", name));
@@ -168,6 +169,7 @@ fn summarize_package_json_str(path: &Path) -> Result<String> {
 }
 
 fn summarize_requirements_str(path: &Path) -> Result<String> {
+    let max_deps = caps().warnings;
     let content = fs::read_to_string(path)?;
     let dep_re = Regex::new(r"^([a-zA-Z0-9_-]+)([=<>!~]+.*)?$").unwrap();
     let mut deps = Vec::new();
@@ -186,16 +188,17 @@ fn summarize_requirements_str(path: &Path) -> Result<String> {
     }
 
     out.push_str(&format!("  Packages ({}):\n", deps.len()));
-    for d in deps.iter().take(MAX_DEPS) {
+    for d in deps.iter().take(max_deps) {
         out.push_str(&format!("    {}\n", d));
     }
-    if deps.len() > MAX_DEPS {
-        out.push_str(&format!("    ... +{} more\n", deps.len() - MAX_DEPS));
+    if deps.len() > max_deps {
+        out.push_str(&format!("    ... +{} more\n", deps.len() - max_deps));
     }
     Ok(out)
 }
 
 fn summarize_pyproject_str(path: &Path) -> Result<String> {
+    let max_deps = caps().warnings;
     let content = fs::read_to_string(path)?;
     let mut in_deps = false;
     let mut deps = Vec::new();
@@ -221,17 +224,18 @@ fn summarize_pyproject_str(path: &Path) -> Result<String> {
 
     if !deps.is_empty() {
         out.push_str(&format!("  Dependencies ({}):\n", deps.len()));
-        for d in deps.iter().take(MAX_DEPS) {
+        for d in deps.iter().take(max_deps) {
             out.push_str(&format!("    {}\n", d));
         }
-        if deps.len() > MAX_DEPS {
-            out.push_str(&format!("    ... +{} more\n", deps.len() - MAX_DEPS));
+        if deps.len() > max_deps {
+            out.push_str(&format!("    ... +{} more\n", deps.len() - max_deps));
         }
     }
     Ok(out)
 }
 
 fn summarize_gomod_str(path: &Path) -> Result<String> {
+    let max_deps = caps().warnings;
     let content = fs::read_to_string(path)?;
     let mut module_name = String::new();
     let mut go_version = String::new();
@@ -264,11 +268,11 @@ fn summarize_gomod_str(path: &Path) -> Result<String> {
     }
     if !deps.is_empty() {
         out.push_str(&format!("  Dependencies ({}):\n", deps.len()));
-        for d in deps.iter().take(MAX_DEPS) {
+        for d in deps.iter().take(max_deps) {
             out.push_str(&format!("    {}\n", d));
         }
-        if deps.len() > MAX_DEPS {
-            out.push_str(&format!("    ... +{} more\n", deps.len() - MAX_DEPS));
+        if deps.len() > max_deps {
+            out.push_str(&format!("    ... +{} more\n", deps.len() - max_deps));
         }
     }
     Ok(out)

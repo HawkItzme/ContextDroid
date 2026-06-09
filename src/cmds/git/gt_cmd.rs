@@ -2,7 +2,7 @@
 
 use crate::core::stream::exec_capture;
 use crate::core::tracking;
-use crate::core::truncate::{reduced, CAP_LIST};
+use crate::core::truncate::{caps, reduced};
 use crate::core::utils::{ok_confirmation, resolved_command, strip_ansi, truncate};
 use anyhow::{Context, Result};
 use lazy_static::lazy_static;
@@ -169,10 +169,9 @@ fn passthrough_gt(subcommand: &str, args: &[String], verbose: u8) -> Result<i32>
     crate::core::runner::run_passthrough("gt", &os_args, verbose)
 }
 
-// gt log entries are multi-line — trim the list cap to keep token savings above 60%.
-const MAX_LOG_ENTRIES: usize = reduced(CAP_LIST, 5);
-
 fn filter_gt_log_entries(input: &str) -> String {
+    // gt log entries are multi-line — trim the list cap to keep token savings above 60%.
+    let max_log_entries = reduced(caps().list, 5);
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return String::new();
@@ -191,7 +190,7 @@ fn filter_gt_log_entries(input: &str) -> String {
         let processed = truncate(replaced.trim_end(), 120);
         result.push(processed);
 
-        if entry_count >= MAX_LOG_ENTRIES {
+        if entry_count >= max_log_entries {
             let remaining = lines[i + 1..].iter().filter(|l| is_graph_node(l)).count();
             if remaining > 0 {
                 result.push(format!("... +{} more entries", remaining));

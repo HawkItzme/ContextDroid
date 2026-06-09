@@ -2,11 +2,7 @@ use anyhow::Result;
 use std::io::Read;
 
 use crate::core::stream::RAW_CAP;
-use crate::core::truncate::{CAP_LIST, CAP_WARNINGS};
-
-const MAX_PIPE_MATCHES: usize = CAP_WARNINGS;
-const MAX_PIPE_FILES: usize = CAP_WARNINGS;
-const MAX_PIPE_DIRS: usize = CAP_LIST;
+use crate::core::truncate::caps;
 
 pub fn resolve_filter(name: &str) -> Option<fn(&str) -> String> {
     match name {
@@ -60,6 +56,7 @@ fn vitest_wrapper(input: &str) -> String {
 fn grep_wrapper(input: &str) -> String {
     use std::collections::HashMap;
 
+    let max_pipe_matches = caps().warnings;
     let mut by_file: HashMap<&str, Vec<(&str, &str)>> = HashMap::new();
     let mut total = 0;
 
@@ -83,11 +80,11 @@ fn grep_wrapper(input: &str) -> String {
 
     for (file, matches) in files {
         out.push_str(&format!("[file] {} ({}):\n", file, matches.len()));
-        for (line_num, content) in matches.iter().take(MAX_PIPE_MATCHES) {
+        for (line_num, content) in matches.iter().take(max_pipe_matches) {
             out.push_str(&format!("  {:>4}: {}\n", line_num, content.trim()));
         }
-        if matches.len() > MAX_PIPE_MATCHES {
-            out.push_str(&format!("  +{}\n", matches.len() - MAX_PIPE_MATCHES));
+        if matches.len() > max_pipe_matches {
+            out.push_str(&format!("  +{}\n", matches.len() - max_pipe_matches));
         }
         out.push('\n');
     }
@@ -98,6 +95,8 @@ fn grep_wrapper(input: &str) -> String {
 fn find_wrapper(input: &str) -> String {
     use std::collections::HashMap;
 
+    let max_pipe_files = caps().warnings;
+    let max_pipe_dirs = caps().list;
     let paths: Vec<&str> = input.lines().filter(|l| !l.trim().is_empty()).collect();
 
     if paths.is_empty() {
@@ -122,18 +121,18 @@ fn find_wrapper(input: &str) -> String {
     let mut dirs: Vec<_> = by_dir.iter().collect();
     dirs.sort_by_key(|(d, _)| *d);
 
-    for (dir, files) in dirs.iter().take(MAX_PIPE_DIRS) {
+    for (dir, files) in dirs.iter().take(max_pipe_dirs) {
         out.push_str(&format!("{}/  ({})\n", dir, files.len()));
-        for f in files.iter().take(MAX_PIPE_FILES) {
+        for f in files.iter().take(max_pipe_files) {
             out.push_str(&format!("  {}\n", f));
         }
-        if files.len() > MAX_PIPE_FILES {
-            out.push_str(&format!("  +{}\n", files.len() - MAX_PIPE_FILES));
+        if files.len() > max_pipe_files {
+            out.push_str(&format!("  +{}\n", files.len() - max_pipe_files));
         }
     }
 
-    if dirs.len() > MAX_PIPE_DIRS {
-        out.push_str(&format!("\n+{} more dirs\n", dirs.len() - MAX_PIPE_DIRS));
+    if dirs.len() > max_pipe_dirs {
+        out.push_str(&format!("\n+{} more dirs\n", dirs.len() - max_pipe_dirs));
     }
 
     out

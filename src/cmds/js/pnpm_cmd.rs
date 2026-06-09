@@ -2,7 +2,7 @@
 
 use crate::core::stream::exec_capture;
 use crate::core::tracking;
-use crate::core::truncate::CAP_LIST;
+use crate::core::truncate::caps;
 use crate::core::utils::resolved_command;
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -13,8 +13,6 @@ use crate::parser::{
     emit_degradation_warning, emit_passthrough_warning, truncate_passthrough, Dependency,
     DependencyState, FormatMode, OutputParser, ParseResult, TokenFormatter,
 };
-
-const MAX_LISTING: usize = CAP_LIST;
 
 /// pnpm list JSON output structure
 #[derive(Debug, Deserialize)]
@@ -290,6 +288,7 @@ fn extract_outdated_text(output: &str) -> Option<DependencyState> {
 /// `cap = false` for `pnpm list --prod` / `pnpm list --dev` (hint targets,
 /// must show every package so the LLM can find what was hidden by the cap).
 fn format_dependency_listing(state: &DependencyState, cap: bool) -> String {
+    let max_listing = caps().list;
     let prod: Vec<_> = state.dependencies.iter().filter(|d| !d.dev_dependency).collect();
     let dev: Vec<_> = state.dependencies.iter().filter(|d| d.dev_dependency).collect();
     let total = state.total_packages.max(state.dependencies.len());
@@ -303,19 +302,19 @@ fn format_dependency_listing(state: &DependencyState, cap: bool) -> String {
 
     if !prod.is_empty() {
         lines.push("[prod]".to_string());
-        let shown = if cap { prod.len().min(MAX_LISTING) } else { prod.len() };
+        let shown = if cap { prod.len().min(max_listing) } else { prod.len() };
         for dep in prod.iter().take(shown) {
             lines.push(format!("  {} {}", dep.name, dep.current_version));
         }
-        if cap && prod.len() > MAX_LISTING {
-            lines.push(format!("  … +{} more", prod.len() - MAX_LISTING));
+        if cap && prod.len() > max_listing {
+            lines.push(format!("  … +{} more", prod.len() - max_listing));
             let all_prod = prod
                 .iter()
                 .map(|dep| format!("  {} {}", dep.name, dep.current_version))
                 .collect::<Vec<_>>()
                 .join("\n");
             if let Some(hint) =
-                crate::core::tee::force_tee_tail_hint(&all_prod, "pnpm-prod", MAX_LISTING + 1)
+                crate::core::tee::force_tee_tail_hint(&all_prod, "pnpm-prod", max_listing + 1)
             {
                 lines.push(format!("  {}", hint));
             }
@@ -324,19 +323,19 @@ fn format_dependency_listing(state: &DependencyState, cap: bool) -> String {
 
     if !dev.is_empty() {
         lines.push("[dev]".to_string());
-        let shown = if cap { dev.len().min(MAX_LISTING) } else { dev.len() };
+        let shown = if cap { dev.len().min(max_listing) } else { dev.len() };
         for dep in dev.iter().take(shown) {
             lines.push(format!("  {} {}", dep.name, dep.current_version));
         }
-        if cap && dev.len() > MAX_LISTING {
-            lines.push(format!("  … +{} more", dev.len() - MAX_LISTING));
+        if cap && dev.len() > max_listing {
+            lines.push(format!("  … +{} more", dev.len() - max_listing));
             let all_dev = dev
                 .iter()
                 .map(|dep| format!("  {} {}", dep.name, dep.current_version))
                 .collect::<Vec<_>>()
                 .join("\n");
             if let Some(hint) =
-                crate::core::tee::force_tee_tail_hint(&all_dev, "pnpm-dev", MAX_LISTING + 1)
+                crate::core::tee::force_tee_tail_hint(&all_dev, "pnpm-dev", max_listing + 1)
             {
                 lines.push(format!("  {}", hint));
             }
@@ -636,8 +635,9 @@ mod tests {
         let state = make_state(&prod, &["eslint"]);
         let out = format_dependency_listing(&state, true);
         let prod_count = 60usize;
+        let max_listing = caps().list;
         assert!(
-            out.contains(&format!("… +{} more", prod_count - MAX_LISTING)),
+            out.contains(&format!("… +{} more", prod_count - max_listing)),
             "truncation count missing: got\n{out}"
         );
     }

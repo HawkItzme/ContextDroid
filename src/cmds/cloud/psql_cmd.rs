@@ -4,14 +4,11 @@
 //! and produces compact tab-separated or key=value output.
 
 use crate::core::runner::{self, RunOptions};
-use crate::core::truncate::CAP_LIST;
+use crate::core::truncate::caps;
 use crate::core::utils::resolved_command;
 use anyhow::Result;
 use lazy_static::lazy_static;
 use regex::Regex;
-
-const MAX_TABLE_ROWS: usize = CAP_LIST;
-const MAX_EXPANDED_RECORDS: usize = CAP_LIST;
 
 lazy_static! {
     static ref EXPANDED_RECORD: Regex = Regex::new(r"-\[ RECORD \d+ \]-").unwrap();
@@ -77,6 +74,7 @@ fn is_expanded_format(output: &str) -> bool {
 /// - Trim column padding
 /// - Output tab-separated
 fn filter_table(output: &str) -> String {
+    let max_table_rows = caps().list;
     let mut result = Vec::new();
     let mut data_rows = 0;
     let mut total_rows = 0;
@@ -107,7 +105,7 @@ fn filter_table(output: &str) -> String {
                 data_rows += 1;
             }
 
-            if data_rows <= MAX_TABLE_ROWS || total_rows == 1 {
+            if data_rows <= max_table_rows || total_rows == 1 {
                 let cols: Vec<&str> = trimmed.split('|').map(|c| c.trim()).collect();
                 result.push(cols.join("\t"));
             }
@@ -117,8 +115,8 @@ fn filter_table(output: &str) -> String {
         }
     }
 
-    if data_rows > MAX_TABLE_ROWS {
-        result.push(format!("... +{} more rows", data_rows - MAX_TABLE_ROWS));
+    if data_rows > max_table_rows {
+        result.push(format!("... +{} more rows", data_rows - max_table_rows));
     }
 
     result.join("\n")
@@ -127,6 +125,7 @@ fn filter_table(output: &str) -> String {
 /// Filter psql expanded format:
 /// Convert -[ RECORD N ]- blocks to one-liner key=val format
 fn filter_expanded(output: &str) -> String {
+    let max_expanded_records = caps().list;
     let mut result = Vec::new();
     let mut current_pairs: Vec<String> = Vec::new();
     let mut current_record: Option<String> = None;
@@ -142,7 +141,7 @@ fn filter_expanded(output: &str) -> String {
         if let Some(caps) = RECORD_HEADER.captures(trimmed) {
             // Flush previous record
             if let Some(rec) = current_record.take() {
-                if record_count <= MAX_EXPANDED_RECORDS {
+                if record_count <= max_expanded_records {
                     result.push(format!("{} {}", rec, current_pairs.join(" ")));
                 }
                 current_pairs.clear();
@@ -167,15 +166,15 @@ fn filter_expanded(output: &str) -> String {
 
     // Flush last record
     if let Some(rec) = current_record.take() {
-        if record_count <= MAX_EXPANDED_RECORDS {
+        if record_count <= max_expanded_records {
             result.push(format!("{} {}", rec, current_pairs.join(" ")));
         }
     }
 
-    if record_count > MAX_EXPANDED_RECORDS {
+    if record_count > max_expanded_records {
         result.push(format!(
             "... +{} more records",
-            record_count - MAX_EXPANDED_RECORDS
+            record_count - max_expanded_records
         ));
     }
 
@@ -250,11 +249,12 @@ mod tests {
         lines.push("(40 rows)".to_string());
         let input = lines.join("\n");
 
+        let max_table_rows = caps().list;
         let result = filter_table(&input);
         assert!(result.contains("... +20 more rows"));
-        // Header + MAX_TABLE_ROWS data rows + overflow line
+        // Header + max_table_rows data rows + overflow line
         let result_lines: Vec<&str> = result.lines().collect();
-        assert_eq!(result_lines.len(), MAX_TABLE_ROWS + 2); // 1 header + data + 1 overflow
+        assert_eq!(result_lines.len(), max_table_rows + 2); // 1 header + data + 1 overflow
     }
 
     #[test]

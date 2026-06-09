@@ -6,15 +6,12 @@
 //! fails to parse.
 
 use crate::core::runner;
-use crate::core::truncate::{reduced, CAP_WARNINGS};
+use crate::core::truncate::{caps, reduced};
 use crate::core::utils::{fallback_tail, ruby_exec, truncate};
 use anyhow::Result;
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde::Deserialize;
-
-// rspec failures carry full backtraces — show fewer than a generic warning list.
-const MAX_RSPEC_FAILURES: usize = reduced(CAP_WARNINGS, 5);
 
 // ── Noise-stripping regex patterns ──────────────────────────────────────────
 
@@ -183,6 +180,8 @@ fn filter_rspec_output(output: &str) -> String {
 }
 
 fn build_rspec_summary(rspec: &RspecOutput) -> String {
+    // rspec failures carry full backtraces — show fewer than a generic warning list.
+    let max_rspec_failures = reduced(caps().warnings, 5);
     let s = &rspec.summary;
 
     if s.example_count == 0 && s.errors_outside_of_examples_count == 0 {
@@ -228,7 +227,7 @@ fn build_rspec_summary(rspec: &RspecOutput) -> String {
 
     result.push_str("\nFailures:\n");
 
-    for (i, example) in failures.iter().take(MAX_RSPEC_FAILURES).enumerate() {
+    for (i, example) in failures.iter().take(max_rspec_failures).enumerate() {
         result.push_str(&format!(
             "{}. ❌ {}\n   {}:{}\n",
             i + 1,
@@ -255,15 +254,15 @@ fn build_rspec_summary(rspec: &RspecOutput) -> String {
             }
         }
 
-        if i < failures.len().min(MAX_RSPEC_FAILURES) - 1 {
+        if i < failures.len().min(max_rspec_failures) - 1 {
             result.push('\n');
         }
     }
 
-    if failures.len() > MAX_RSPEC_FAILURES {
+    if failures.len() > max_rspec_failures {
         result.push_str(&format!(
             "\n... +{} more failures\n",
-            failures.len() - MAX_RSPEC_FAILURES
+            failures.len() - max_rspec_failures
         ));
     }
 
@@ -272,6 +271,7 @@ fn build_rspec_summary(rspec: &RspecOutput) -> String {
 
 /// State machine text fallback parser for when JSON is unavailable.
 fn filter_rspec_text(output: &str) -> String {
+    let max_rspec_failures = reduced(caps().warnings, 5);
     #[derive(PartialEq)]
     enum State {
         Header,
@@ -354,16 +354,16 @@ fn filter_rspec_text(output: &str) -> String {
         }
         let mut result = format!("RSpec: {}\n", summary_line);
         result.push_str("═══════════════════════════════════════\n\n");
-        for (i, failure) in failures.iter().take(MAX_RSPEC_FAILURES).enumerate() {
+        for (i, failure) in failures.iter().take(max_rspec_failures).enumerate() {
             result.push_str(&format!("{}. ❌ {}\n", i + 1, failure));
-            if i < failures.len().min(MAX_RSPEC_FAILURES) - 1 {
+            if i < failures.len().min(max_rspec_failures) - 1 {
                 result.push('\n');
             }
         }
-        if failures.len() > MAX_RSPEC_FAILURES {
+        if failures.len() > max_rspec_failures {
             result.push_str(&format!(
                 "\n... +{} more failures\n",
-                failures.len() - MAX_RSPEC_FAILURES
+                failures.len() - max_rspec_failures
             ));
         }
         return result.trim().to_string();

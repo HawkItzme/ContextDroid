@@ -5,11 +5,9 @@
 //! Uses `ruby_exec("rake")` to auto-detect `bundle exec`.
 
 use crate::core::runner;
-use crate::core::truncate::CAP_WARNINGS;
+use crate::core::truncate::caps;
 use crate::core::utils::ruby_exec;
 use anyhow::Result;
-
-const MAX_RAKE_FAILURES: usize = CAP_WARNINGS;
 
 /// Decide whether to use `rake test` or `rails test` based on args.
 ///
@@ -171,6 +169,7 @@ fn is_failure_header(line: &str) -> bool {
 }
 
 fn build_minitest_summary(summary: &str, failures: &[String]) -> String {
+    let max_rake_failures = caps().warnings;
     let (runs, _assertions, fail_count, error_count, skips) = parse_minitest_summary(summary);
 
     if runs == 0 && summary.is_empty() {
@@ -201,7 +200,7 @@ fn build_minitest_summary(summary: &str, failures: &[String]) -> String {
 
     result.push('\n');
 
-    for (i, failure) in failures.iter().take(MAX_RAKE_FAILURES).enumerate() {
+    for (i, failure) in failures.iter().take(max_rake_failures).enumerate() {
         let lines: Vec<&str> = failure.lines().collect();
         // First line is like "  1) Failure:" or "  1) Error:"
         if let Some(header) = lines.first() {
@@ -217,15 +216,15 @@ fn build_minitest_summary(summary: &str, failures: &[String]) -> String {
                 ));
             }
         }
-        if i < failures.len().min(MAX_RAKE_FAILURES) - 1 {
+        if i < failures.len().min(max_rake_failures) - 1 {
             result.push('\n');
         }
     }
 
-    if failures.len() > MAX_RAKE_FAILURES {
+    if failures.len() > max_rake_failures {
         result.push_str(&format!(
             "\n... +{} more failures\n",
-            failures.len() - MAX_RAKE_FAILURES
+            failures.len() - max_rake_failures
         ));
     }
 

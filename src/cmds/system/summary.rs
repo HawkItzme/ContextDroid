@@ -2,14 +2,11 @@
 
 use crate::core::stream::exec_capture;
 use crate::core::tracking;
-use crate::core::truncate::CAP_WARNINGS;
+use crate::core::truncate::caps;
 use crate::core::utils::truncate;
 use anyhow::{Context, Result};
 use regex::Regex;
 use std::process::Command;
-
-const MAX_SUMMARY_LIST: usize = CAP_WARNINGS;
-const MAX_SUMMARY_KEYS: usize = CAP_WARNINGS;
 
 /// Run a command and provide a heuristic summary
 pub fn run(command: &str, verbose: u8) -> Result<i32> {
@@ -230,18 +227,20 @@ fn summarize_logs_quick(output: &str, result: &mut Vec<String>) {
 }
 
 fn summarize_list(output: &str, result: &mut Vec<String>) {
+    let max_summary_list = caps().warnings;
     let lines: Vec<&str> = output.lines().filter(|l| !l.trim().is_empty()).collect();
     result.push(format!("List ({} items):", lines.len()));
 
-    for line in lines.iter().take(MAX_SUMMARY_LIST) {
+    for line in lines.iter().take(max_summary_list) {
         result.push(format!("   • {}", truncate(line, 70)));
     }
-    if lines.len() > MAX_SUMMARY_LIST {
-        result.push(format!("   ... +{} more", lines.len() - MAX_SUMMARY_LIST));
+    if lines.len() > max_summary_list {
+        result.push(format!("   ... +{} more", lines.len() - max_summary_list));
     }
 }
 
 fn summarize_json(output: &str, result: &mut Vec<String>) {
+    let max_summary_keys = caps().warnings;
     result.push("JSON Output:".to_string());
 
     // Try to parse and show structure
@@ -252,11 +251,11 @@ fn summarize_json(output: &str, result: &mut Vec<String>) {
             }
             serde_json::Value::Object(obj) => {
                 result.push(format!("   Object with {} keys:", obj.len()));
-                for key in obj.keys().take(MAX_SUMMARY_KEYS) {
+                for key in obj.keys().take(max_summary_keys) {
                     result.push(format!("   • {}", key));
                 }
-                if obj.len() > MAX_SUMMARY_KEYS {
-                    result.push(format!("   ... +{} more keys", obj.len() - MAX_SUMMARY_KEYS));
+                if obj.len() > max_summary_keys {
+                    result.push(format!("   ... +{} more keys", obj.len() - max_summary_keys));
                 }
             }
             _ => {

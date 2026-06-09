@@ -1,14 +1,11 @@
 //! Runs arbitrary commands and captures only stderr or test failures.
 
 use crate::core::stream::StreamFilter;
-use crate::core::truncate::{CAP_LIST, CAP_WARNINGS};
+use crate::core::truncate::caps;
 use anyhow::Result;
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::process::Command;
-
-const MAX_RUNNER_FAILURES: usize = CAP_WARNINGS;
-const MAX_RUNNER_LINES: usize = CAP_LIST;
 
 lazy_static! {
     static ref ERROR_PATTERNS: Vec<Regex> = vec![
@@ -179,6 +176,8 @@ fn filter_errors(output: &str) -> String {
 }
 
 fn extract_test_summary(output: &str, command: &str) -> String {
+    let max_runner_failures = caps().warnings;
+    let max_runner_lines = caps().list;
     let mut result = Vec::new();
     let lines: Vec<&str> = output.lines().collect();
 
@@ -240,22 +239,22 @@ fn extract_test_summary(output: &str, command: &str) -> String {
 
     if !failures.is_empty() {
         output.push_str("[FAIL] FAILURES:\n");
-        for f in failures.iter().take(MAX_RUNNER_FAILURES) {
+        for f in failures.iter().take(max_runner_failures) {
             output.push_str(&format!("  {}\n", f));
         }
-        if failures.len() > MAX_RUNNER_FAILURES {
+        if failures.len() > max_runner_failures {
             output.push_str(&format!(
                 "  ... +{} more failures\n",
-                failures.len() - MAX_RUNNER_FAILURES
+                failures.len() - max_runner_failures
             ));
         }
-        for f in failure_lines.iter().take(MAX_RUNNER_LINES) {
+        for f in failure_lines.iter().take(max_runner_lines) {
             output.push_str(&format!("  {}\n", f.trim()));
         }
-        if failure_lines.len() > MAX_RUNNER_LINES {
+        if failure_lines.len() > max_runner_lines {
             output.push_str(&format!(
                 "  ... +{} more\n",
-                failure_lines.len() - MAX_RUNNER_LINES
+                failure_lines.len() - max_runner_lines
             ));
         }
         output.push('\n');

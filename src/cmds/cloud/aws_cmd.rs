@@ -5,7 +5,7 @@
 
 use crate::core::tee::force_tee_hint;
 use crate::core::tracking;
-use crate::core::truncate::{CAP_INVENTORY, CAP_LIST};
+use crate::core::truncate::caps;
 use crate::core::utils::{
     exit_code_from_output, exit_code_from_status, human_bytes, join_with_overflow,
     resolved_command, shorten_arn, truncate_iso_date,
@@ -16,7 +16,6 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use serde_json::Value;
 
-const MAX_ITEMS: usize = CAP_LIST;
 const JSON_COMPRESS_DEPTH: usize = 4;
 
 /// Result of a filter function: filtered text + whether items were truncated.
@@ -489,9 +488,10 @@ fn filter_sts_identity(json_str: &str) -> Option<FilterResult> {
 }
 
 fn filter_s3_ls(output: &str) -> FilterResult {
+    let max_items = caps().list;
     let lines: Vec<&str> = output.lines().collect();
     let total = lines.len();
-    let limit = MAX_ITEMS + 10;
+    let limit = max_items + 10;
 
     if total > limit {
         let text = format!(
@@ -506,6 +506,7 @@ fn filter_s3_ls(output: &str) -> FilterResult {
 }
 
 fn filter_ec2_instances(json_str: &str) -> Option<FilterResult> {
+    let max_items = caps().list;
     let v: Value = serde_json::from_str(json_str).ok()?;
     let reservations = v["Reservations"].as_array()?;
 
@@ -546,15 +547,15 @@ fn filter_ec2_instances(json_str: &str) -> Option<FilterResult> {
     }
 
     let total = instances.len();
-    let truncated = total > MAX_ITEMS;
+    let truncated = total > max_items;
     let mut result = format!("EC2: {} instances\n", total);
 
-    for inst in instances.iter().take(MAX_ITEMS) {
+    for inst in instances.iter().take(max_items) {
         result.push_str(&format!("  {}\n", inst));
     }
 
     if truncated {
-        result.push_str(&format!("  … +{} more\n", total - MAX_ITEMS));
+        result.push_str(&format!("  … +{} more\n", total - max_items));
     }
 
     let text = result.trim_end().to_string();
@@ -566,19 +567,20 @@ fn filter_ec2_instances(json_str: &str) -> Option<FilterResult> {
 }
 
 fn filter_ecs_list_services(json_str: &str) -> Option<FilterResult> {
+    let max_items = caps().list;
     let v: Value = serde_json::from_str(json_str).ok()?;
     let arns = v["serviceArns"].as_array()?;
 
     let mut result = Vec::new();
     let total = arns.len();
 
-    for arn in arns.iter().take(MAX_ITEMS) {
+    for arn in arns.iter().take(max_items) {
         let arn_str = arn.as_str().unwrap_or("?");
         result.push(shorten_arn(arn_str).to_string());
     }
 
-    let text = join_with_overflow(&result, total, MAX_ITEMS, "services");
-    Some(if total > MAX_ITEMS {
+    let text = join_with_overflow(&result, total, max_items, "services");
+    Some(if total > max_items {
         FilterResult::truncated(text)
     } else {
         FilterResult::new(text)
@@ -586,13 +588,14 @@ fn filter_ecs_list_services(json_str: &str) -> Option<FilterResult> {
 }
 
 fn filter_ecs_describe_services(json_str: &str) -> Option<FilterResult> {
+    let max_items = caps().list;
     let v: Value = serde_json::from_str(json_str).ok()?;
     let services = v["services"].as_array()?;
 
     let mut result = Vec::new();
     let total = services.len();
 
-    for svc in services.iter().take(MAX_ITEMS) {
+    for svc in services.iter().take(max_items) {
         let name = svc["serviceName"].as_str().unwrap_or("?");
         let status = svc["status"].as_str().unwrap_or("?");
         let running = svc["runningCount"].as_i64().unwrap_or(0);
@@ -604,8 +607,8 @@ fn filter_ecs_describe_services(json_str: &str) -> Option<FilterResult> {
         ));
     }
 
-    let text = join_with_overflow(&result, total, MAX_ITEMS, "services");
-    Some(if total > MAX_ITEMS {
+    let text = join_with_overflow(&result, total, max_items, "services");
+    Some(if total > max_items {
         FilterResult::truncated(text)
     } else {
         FilterResult::new(text)
@@ -613,13 +616,14 @@ fn filter_ecs_describe_services(json_str: &str) -> Option<FilterResult> {
 }
 
 fn filter_rds_instances(json_str: &str) -> Option<FilterResult> {
+    let max_items = caps().list;
     let v: Value = serde_json::from_str(json_str).ok()?;
     let dbs = v["DBInstances"].as_array()?;
 
     let mut result = Vec::new();
     let total = dbs.len();
 
-    for db in dbs.iter().take(MAX_ITEMS) {
+    for db in dbs.iter().take(max_items) {
         let name = db["DBInstanceIdentifier"].as_str().unwrap_or("?");
         let engine = db["Engine"].as_str().unwrap_or("?");
         let version = db["EngineVersion"].as_str().unwrap_or("?");
@@ -633,8 +637,8 @@ fn filter_rds_instances(json_str: &str) -> Option<FilterResult> {
         ));
     }
 
-    let text = join_with_overflow(&result, total, MAX_ITEMS, "instances");
-    Some(if total > MAX_ITEMS {
+    let text = join_with_overflow(&result, total, max_items, "instances");
+    Some(if total > max_items {
         FilterResult::truncated(text)
     } else {
         FilterResult::new(text)
@@ -642,13 +646,14 @@ fn filter_rds_instances(json_str: &str) -> Option<FilterResult> {
 }
 
 fn filter_cfn_list_stacks(json_str: &str) -> Option<FilterResult> {
+    let max_items = caps().list;
     let v: Value = serde_json::from_str(json_str).ok()?;
     let stacks = v["StackSummaries"].as_array()?;
 
     let mut result = Vec::new();
     let total = stacks.len();
 
-    for stack in stacks.iter().take(MAX_ITEMS) {
+    for stack in stacks.iter().take(max_items) {
         let name = stack["StackName"].as_str().unwrap_or("?");
         let status = stack["StackStatus"].as_str().unwrap_or("?");
         let date = stack["LastUpdatedTime"]
@@ -658,8 +663,8 @@ fn filter_cfn_list_stacks(json_str: &str) -> Option<FilterResult> {
         result.push(format!("{} {} {}", name, status, truncate_iso_date(date)));
     }
 
-    let text = join_with_overflow(&result, total, MAX_ITEMS, "stacks");
-    Some(if total > MAX_ITEMS {
+    let text = join_with_overflow(&result, total, max_items, "stacks");
+    Some(if total > max_items {
         FilterResult::truncated(text)
     } else {
         FilterResult::new(text)
@@ -667,13 +672,14 @@ fn filter_cfn_list_stacks(json_str: &str) -> Option<FilterResult> {
 }
 
 fn filter_cfn_describe_stacks(json_str: &str) -> Option<FilterResult> {
+    let max_items = caps().list;
     let v: Value = serde_json::from_str(json_str).ok()?;
     let stacks = v["Stacks"].as_array()?;
 
     let mut result = Vec::new();
     let total = stacks.len();
 
-    for stack in stacks.iter().take(MAX_ITEMS) {
+    for stack in stacks.iter().take(max_items) {
         let name = stack["StackName"].as_str().unwrap_or("?");
         let status = stack["StackStatus"].as_str().unwrap_or("?");
         let date = stack["LastUpdatedTime"]
@@ -691,8 +697,8 @@ fn filter_cfn_describe_stacks(json_str: &str) -> Option<FilterResult> {
         }
     }
 
-    let text = join_with_overflow(&result, total, MAX_ITEMS, "stacks");
-    Some(if total > MAX_ITEMS {
+    let text = join_with_overflow(&result, total, max_items, "stacks");
+    Some(if total > max_items {
         FilterResult::truncated(text)
     } else {
         FilterResult::new(text)
@@ -700,8 +706,6 @@ fn filter_cfn_describe_stacks(json_str: &str) -> Option<FilterResult> {
 }
 
 // --- P0 filters: CloudWatch Logs, CloudFormation Events, Lambda ---
-
-const MAX_LOG_EVENTS: usize = CAP_INVENTORY;
 
 /// Convert days since Unix epoch to (year, month, day). Civil calendar, UTC.
 fn days_to_ymd(days: i64) -> (i64, i64, i64) {
@@ -720,14 +724,15 @@ fn days_to_ymd(days: i64) -> (i64, i64, i64) {
 }
 
 fn filter_logs_events(json_str: &str) -> Option<FilterResult> {
+    let max_log_events = caps().inventory;
     let v: Value = serde_json::from_str(json_str).ok()?;
     let events = v["events"].as_array()?;
 
     let total = events.len();
-    let truncated = total > MAX_LOG_EVENTS;
+    let truncated = total > max_log_events;
     let mut lines = Vec::new();
 
-    for event in events.iter().take(MAX_LOG_EVENTS) {
+    for event in events.iter().take(max_log_events) {
         // Convert epoch ms to YYYY-MM-DD HH:MM:SS UTC
         let time_str = match event["timestamp"].as_i64() {
             Some(ts) if ts > 0 => {
@@ -760,7 +765,7 @@ fn filter_logs_events(json_str: &str) -> Option<FilterResult> {
     }
 
     if truncated {
-        lines.push(format!("… +{} more events", total - MAX_LOG_EVENTS));
+        lines.push(format!("… +{} more events", total - max_log_events));
     }
 
     let text = lines.join("\n");
@@ -772,6 +777,7 @@ fn filter_logs_events(json_str: &str) -> Option<FilterResult> {
 }
 
 fn filter_cfn_events(json_str: &str) -> Option<FilterResult> {
+    let max_items = caps().list;
     let v: Value = serde_json::from_str(json_str).ok()?;
     let events = v["StackEvents"].as_array()?;
 
@@ -793,7 +799,7 @@ fn filter_cfn_events(json_str: &str) -> Option<FilterResult> {
 
         if status.contains("FAILED") || status.contains("ROLLBACK") {
             failed_count += 1;
-            if failed.len() < MAX_ITEMS {
+            if failed.len() < max_items {
                 let reason = event["ResourceStatusReason"].as_str().unwrap_or("");
                 let mut line = format!("{} {} {} {}", ts, logical_id, resource_type, status);
                 if !reason.is_empty() {
@@ -825,7 +831,7 @@ fn filter_cfn_events(json_str: &str) -> Option<FilterResult> {
     }
 
     // Truncate if huge number of events
-    let truncated = total_events > MAX_ITEMS * 5; // >100 events
+    let truncated = total_events > max_items * 5; // >100 events
     let text = lines.join("\n");
     Some(if truncated {
         FilterResult::truncated(text)
@@ -835,14 +841,15 @@ fn filter_cfn_events(json_str: &str) -> Option<FilterResult> {
 }
 
 fn filter_lambda_list(json_str: &str) -> Option<FilterResult> {
+    let max_items = caps().list;
     let v: Value = serde_json::from_str(json_str).ok()?;
     let functions = v["Functions"].as_array()?;
 
     let total = functions.len();
-    let truncated = total > MAX_ITEMS;
+    let truncated = total > max_items;
     let mut result = Vec::new();
 
-    for func in functions.iter().take(MAX_ITEMS) {
+    for func in functions.iter().take(max_items) {
         let name = func["FunctionName"].as_str().unwrap_or("?");
         let runtime = func["Runtime"].as_str().unwrap_or("?");
         let memory = func["MemorySize"].as_i64().unwrap_or(0);
@@ -855,7 +862,7 @@ fn filter_lambda_list(json_str: &str) -> Option<FilterResult> {
         ));
     }
 
-    let text = join_with_overflow(&result, total, MAX_ITEMS, "functions");
+    let text = join_with_overflow(&result, total, max_items, "functions");
     Some(if truncated {
         FilterResult::truncated(text)
     } else {
@@ -955,14 +962,15 @@ fn extract_assume_principals(role: &Value) -> Vec<String> {
 }
 
 fn filter_iam_roles(json_str: &str) -> Option<FilterResult> {
+    let max_items = caps().list;
     let v: Value = serde_json::from_str(json_str).ok()?;
     let roles = v["Roles"].as_array()?;
 
     let total = roles.len();
-    let truncated = total > MAX_ITEMS;
+    let truncated = total > max_items;
     let mut result = Vec::new();
 
-    for role in roles.iter().take(MAX_ITEMS) {
+    for role in roles.iter().take(max_items) {
         let name = role["RoleName"].as_str().unwrap_or("?");
         let date = role["CreateDate"]
             .as_str()
@@ -985,7 +993,7 @@ fn filter_iam_roles(json_str: &str) -> Option<FilterResult> {
         }
     }
 
-    let text = join_with_overflow(&result, total, MAX_ITEMS, "roles");
+    let text = join_with_overflow(&result, total, max_items, "roles");
     Some(if truncated {
         FilterResult::truncated(text)
     } else {
@@ -994,14 +1002,15 @@ fn filter_iam_roles(json_str: &str) -> Option<FilterResult> {
 }
 
 fn filter_iam_users(json_str: &str) -> Option<FilterResult> {
+    let max_items = caps().list;
     let v: Value = serde_json::from_str(json_str).ok()?;
     let users = v["Users"].as_array()?;
 
     let total = users.len();
-    let truncated = total > MAX_ITEMS;
+    let truncated = total > max_items;
     let mut result = Vec::new();
 
-    for user in users.iter().take(MAX_ITEMS) {
+    for user in users.iter().take(max_items) {
         let name = user["UserName"].as_str().unwrap_or("?");
         let date = user["CreateDate"]
             .as_str()
@@ -1010,7 +1019,7 @@ fn filter_iam_users(json_str: &str) -> Option<FilterResult> {
         result.push(format!("{} created:{}", name, date));
     }
 
-    let text = join_with_overflow(&result, total, MAX_ITEMS, "users");
+    let text = join_with_overflow(&result, total, max_items, "users");
     Some(if truncated {
         FilterResult::truncated(text)
     } else {
@@ -1103,13 +1112,14 @@ fn unwrap_dynamodb_value(val: &Value, depth: usize) -> Value {
 }
 
 fn filter_dynamodb_items(json_str: &str) -> Option<FilterResult> {
+    let max_items = caps().list;
     let v: Value = serde_json::from_str(json_str).ok()?;
     let items = v["Items"].as_array()?;
 
     let count = v["Count"].as_i64().unwrap_or(items.len() as i64);
     let scanned = v["ScannedCount"].as_i64().unwrap_or(count);
     let total = items.len();
-    let truncated = total > MAX_ITEMS;
+    let truncated = total > max_items;
 
     let mut lines = Vec::new();
     lines.push(format!("Count: {}/{}", count, scanned));
@@ -1126,14 +1136,14 @@ fn filter_dynamodb_items(json_str: &str) -> Option<FilterResult> {
         lines.push("(paginated — more results available)".to_string());
     }
 
-    for item in items.iter().take(MAX_ITEMS) {
+    for item in items.iter().take(max_items) {
         let unwrapped = unwrap_dynamodb_value(item, 0);
         let compact = serde_json::to_string(&unwrapped).unwrap_or_else(|_| "?".to_string());
         lines.push(compact);
     }
 
     if truncated {
-        lines.push(format!("… +{} more items", total - MAX_ITEMS));
+        lines.push(format!("… +{} more items", total - max_items));
     }
 
     let text = lines.join("\n");
@@ -1145,14 +1155,15 @@ fn filter_dynamodb_items(json_str: &str) -> Option<FilterResult> {
 }
 
 fn filter_ecs_tasks(json_str: &str) -> Option<FilterResult> {
+    let max_items = caps().list;
     let v: Value = serde_json::from_str(json_str).ok()?;
     let tasks = v["tasks"].as_array()?;
 
     let total = tasks.len();
-    let truncated = total > MAX_ITEMS;
+    let truncated = total > max_items;
     let mut result = Vec::new();
 
-    for task in tasks.iter().take(MAX_ITEMS) {
+    for task in tasks.iter().take(max_items) {
         let task_arn = task["taskArn"].as_str().unwrap_or("?");
         let task_id = shorten_arn(task_arn);
         let status = task["lastStatus"].as_str().unwrap_or("?");
@@ -1190,7 +1201,7 @@ fn filter_ecs_tasks(json_str: &str) -> Option<FilterResult> {
         ));
     }
 
-    let text = join_with_overflow(&result, total, MAX_ITEMS, "tasks");
+    let text = join_with_overflow(&result, total, max_items, "tasks");
     Some(if truncated {
         FilterResult::truncated(text)
     } else {
@@ -1248,14 +1259,15 @@ fn format_sg_rule(perm: &Value) -> String {
 }
 
 fn filter_security_groups(json_str: &str) -> Option<FilterResult> {
+    let max_items = caps().list;
     let v: Value = serde_json::from_str(json_str).ok()?;
     let groups = v["SecurityGroups"].as_array()?;
 
     let total = groups.len();
-    let truncated = total > MAX_ITEMS;
+    let truncated = total > max_items;
     let mut result = Vec::new();
 
-    for sg in groups.iter().take(MAX_ITEMS) {
+    for sg in groups.iter().take(max_items) {
         let name = sg["GroupName"].as_str().unwrap_or("?");
         let id = sg["GroupId"].as_str().unwrap_or("?");
 
@@ -1285,7 +1297,7 @@ fn filter_security_groups(json_str: &str) -> Option<FilterResult> {
         ));
     }
 
-    let text = join_with_overflow(&result, total, MAX_ITEMS, "groups");
+    let text = join_with_overflow(&result, total, max_items, "groups");
     Some(if truncated {
         FilterResult::truncated(text)
     } else {
@@ -1294,15 +1306,16 @@ fn filter_security_groups(json_str: &str) -> Option<FilterResult> {
 }
 
 fn filter_s3_objects(json_str: &str) -> Option<FilterResult> {
+    let max_items = caps().list;
     let v: Value = serde_json::from_str(json_str).ok()?;
     let empty_vec = vec![];
     let contents = v["Contents"].as_array().unwrap_or(&empty_vec);
 
     let total = contents.len();
-    let truncated = total > MAX_ITEMS;
+    let truncated = total > max_items;
     let mut result = Vec::new();
 
-    for obj in contents.iter().take(MAX_ITEMS) {
+    for obj in contents.iter().take(max_items) {
         let key = obj["Key"].as_str().unwrap_or("?");
         let size = obj["Size"].as_u64().unwrap_or(0);
         let modified = obj["LastModified"]
@@ -1312,7 +1325,7 @@ fn filter_s3_objects(json_str: &str) -> Option<FilterResult> {
         result.push(format!("{} {} {}", key, human_bytes(size), modified));
     }
 
-    let text = join_with_overflow(&result, total, MAX_ITEMS, "objects");
+    let text = join_with_overflow(&result, total, max_items, "objects");
     Some(if truncated {
         FilterResult::truncated(text)
     } else {
@@ -1339,15 +1352,16 @@ lazy_static! {
 }
 
 fn filter_sqs_messages(json_str: &str) -> Option<FilterResult> {
+    let max_items = caps().list;
     let v: Value = serde_json::from_str(json_str).ok()?;
     let empty_vec = vec![];
     let messages = v["Messages"].as_array().unwrap_or(&empty_vec);
 
     let total = messages.len();
-    let truncated = total > MAX_ITEMS;
+    let truncated = total > max_items;
     let mut result = Vec::new();
 
-    for msg in messages.iter().take(MAX_ITEMS) {
+    for msg in messages.iter().take(max_items) {
         let id = msg["MessageId"].as_str().unwrap_or("?");
         let id_short = &id[..id.len().min(8)]; // UUIDs are ASCII-safe
         let body = msg["Body"].as_str().unwrap_or("?");
@@ -1356,7 +1370,7 @@ fn filter_sqs_messages(json_str: &str) -> Option<FilterResult> {
         result.push(format!("{} {}", id_short, body_truncated));
     }
 
-    let text = join_with_overflow(&result, total, MAX_ITEMS, "messages");
+    let text = join_with_overflow(&result, total, max_items, "messages");
     Some(if truncated {
         FilterResult::truncated(text)
     } else {
@@ -1391,6 +1405,7 @@ fn filter_dynamodb_get_item(json_str: &str) -> Option<FilterResult> {
 }
 
 fn filter_logs_query_results(json_str: &str) -> Option<FilterResult> {
+    let max_items = caps().list;
     let v: Value = serde_json::from_str(json_str).ok()?;
 
     let mut lines = Vec::new();
@@ -1403,9 +1418,9 @@ fn filter_logs_query_results(json_str: &str) -> Option<FilterResult> {
     // Extract results array (array of arrays of {field, value} objects)
     if let Some(results) = v["results"].as_array() {
         let total = results.len();
-        let truncated = total > MAX_ITEMS;
+        let truncated = total > max_items;
 
-        for row in results.iter().take(MAX_ITEMS) {
+        for row in results.iter().take(max_items) {
             if let Some(fields) = row.as_array() {
                 let field_pairs: Vec<String> = fields
                     .iter()
@@ -1427,7 +1442,7 @@ fn filter_logs_query_results(json_str: &str) -> Option<FilterResult> {
         }
 
         if truncated {
-            lines.push(format!("… +{} more rows", total - MAX_ITEMS));
+            lines.push(format!("… +{} more rows", total - max_items));
         }
 
         let text = lines.join("\n");
@@ -2746,7 +2761,7 @@ upload: file10.txt to s3://bucket/file10.txt
         }
         let json = format!(r#"{{"StackEvents": [{}]}}"#, events.join(","));
         let result = filter_cfn_events(&json).unwrap();
-        // Should report all 30 failures, not capped at MAX_ITEMS (20)
+        // Should report all 30 failures, not capped at max_items (20)
         assert!(result.text.contains("30 failed"));
     }
 }
