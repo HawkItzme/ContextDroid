@@ -93,19 +93,31 @@ impl BlockHandler for CargoBuildHandler {
         !(line.trim().is_empty() && block.len() > 3)
     }
 
-    fn format_summary(&self, _exit_code: i32, _raw: &str) -> Option<String> {
-        if self.error_count == 0 && self.warnings == 0 {
+    fn format_summary(&self, exit_code: i32, raw: &str) -> Option<String> {
+        let json_errors = extract_json_diagnostics(raw, "error");
+        let errors = self.error_count.max(json_errors.len());
+        let warnings = self
+            .warnings
+            .max(extract_json_diagnostics(raw, "warning").len());
+
+        if errors == 0 && warnings == 0 && exit_code == 0 {
             let mut s = format!("cargo build ({} crates compiled)", self.compiled);
             if let Some(ref finished) = self.finished_line {
                 s = format!("{}\n{}", s, finished);
             }
-            Some(format!("{}\n", s))
-        } else {
-            Some(format!(
-                "cargo build: {} errors, {} warnings ({} crates)\n",
-                self.error_count, self.warnings, self.compiled
-            ))
+            return Some(format!("{}\n", s));
         }
+
+        let mut out = String::new();
+        for d in &json_errors {
+            out.push_str(d);
+            out.push('\n');
+        }
+        out.push_str(&format!(
+            "cargo build: {} errors, {} warnings ({} crates)\n",
+            errors, warnings, self.compiled
+        ));
+        Some(out)
     }
 }
 
@@ -757,6 +769,36 @@ fn filter_cargo_nextest(output: &str) -> String {
     String::new()
 }
 
+fn extract_json_diagnostics(raw: &str, level: &str) -> Vec<String> {
+    let mut diags = Vec::new();
+    for line in raw.lines() {
+        let line = line.trim_start();
+        if !line.starts_with('{') {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if v["reason"].as_str() != Some("compiler-message") {
+            continue;
+        }
+        let msg = &v["message"];
+        if msg["level"].as_str() != Some(level) {
+            continue;
+        }
+        let text = msg["message"].as_str().unwrap_or("");
+        if text.starts_with("aborting due to") || text.starts_with("could not compile") {
+            continue;
+        }
+        if let Some(rendered) = msg["rendered"].as_str() {
+            diags.push(rendered.trim_end().to_string());
+        } else if !text.is_empty() {
+            diags.push(text.to_string());
+        }
+    }
+    diags
+}
+
 fn filter_cargo_build(output: &str) -> String {
     let mut handler = CargoBuildHandler::new();
     let mut blocks: Vec<Vec<String>> = Vec::new();
@@ -786,7 +828,13 @@ fn filter_cargo_build(output: &str) -> String {
         blocks.push(current_block);
     }
 
-    if handler.error_count == 0 && handler.warnings == 0 {
+    let json_errors = extract_json_diagnostics(output, "error");
+    let errors = handler.error_count.max(json_errors.len());
+    let warnings = handler
+        .warnings
+        .max(extract_json_diagnostics(output, "warning").len());
+
+    if errors == 0 && warnings == 0 {
         let mut s = format!("cargo build ({} crates compiled)", handler.compiled);
         if let Some(ref finished) = handler.finished_line {
             s = format!("{}\n{}", s, finished);
@@ -796,8 +844,12 @@ fn filter_cargo_build(output: &str) -> String {
 
     let mut result = format!(
         "cargo build: {} errors, {} warnings ({} crates)\n",
-        handler.error_count, handler.warnings, handler.compiled
+        errors, warnings, handler.compiled
     );
+    for d in &json_errors {
+        result.push_str(d);
+        result.push('\n');
+    }
     const MAX_CHECK_BLOCKS: usize = CAP_ERRORS;
     for (i, blk) in blocks.iter().enumerate().take(MAX_CHECK_BLOCKS) {
         result.push_str(&blk.join("\n"));
@@ -2127,6 +2179,40 @@ error: aborting due to 1 previous error
         assert!(result.contains("mismatched types"), "got: {}", result);
         assert!(result.contains("1 errors"), "got: {}", result);
         assert!(!result.contains("aborting"), "got: {}", result);
+    }
+
+    #[test]
+    fn test_cargo_build_stream_json_failure_not_compiled() {
+        let input = concat!(
+            "   Compiling v_cargo v0.1.0\n",
+            r#"{"reason":"compiler-message","message":{"rendered":"error[E0308]: mismatched types\n --> src/main.rs:2:18","level":"error","message":"mismatched types"}}"#,
+            "\n",
+            r#"{"reason":"build-finished","success":false}"#,
+            "\n",
+        );
+        let mut f = BlockStreamFilter::new(CargoBuildHandler::new());
+        let result = run_block_filter(&mut f, input, 101);
+        assert!(result.contains("E0308"), "got: {}", result);
+        assert!(result.contains("1 errors"), "got: {}", result);
+        assert!(
+            !result.contains("crates compiled"),
+            "failed json build must not be reported as compiled: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_filter_cargo_build_json_failure_not_compiled() {
+        let output = concat!(
+            r#"{"reason":"compiler-message","message":{"rendered":"error[E0277]: the trait bound is not satisfied","level":"error","message":"trait bound"}}"#,
+            "\n",
+            r#"{"reason":"build-finished","success":false}"#,
+            "\n",
+        );
+        let result = filter_cargo_build(output);
+        assert!(result.contains("E0277"), "got: {}", result);
+        assert!(result.contains("1 errors"), "got: {}", result);
+        assert!(!result.contains("crates compiled"), "got: {}", result);
     }
 
     #[test]
