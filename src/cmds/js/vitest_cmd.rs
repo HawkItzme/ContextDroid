@@ -8,8 +8,9 @@ use crate::core::stream::exec_capture;
 use crate::core::tracking;
 use crate::core::utils::{package_manager_exec, strip_ansi};
 use crate::parser::{
-    emit_degradation_warning, emit_passthrough_warning, extract_json_object, truncate_passthrough,
-    FormatMode, OutputParser, ParseResult, TestFailure, TestResult, TokenFormatter,
+    emit_degradation_warning, emit_passthrough_warning, extract_json_object, truncate_output,
+    truncate_passthrough, FormatMode, OutputParser, ParseResult, TestFailure, TestResult,
+    TokenFormatter,
 };
 use crate::Commands;
 
@@ -246,21 +247,25 @@ pub fn run_test(command: &Commands, args: &[String], verbose: u8) -> Result<i32>
     let result = exec_capture(&mut cmd).context(format!("Failed to run {}", framework))?;
     let combined = result.combined();
 
-    let filtered = format_test_output(framework, &result.stdout, &combined, passthrough_requested, verbose);
+    let filtered = format_test_output(
+        framework,
+        &result.stdout,
+        &combined,
+        passthrough_requested,
+        verbose,
+    );
+    let tee_label = format!("{}_run", framework);
 
-    if let Some(hint) =
-        crate::core::tee::tee_and_hint(&combined, format!("{}_run", framework).as_str(), result.exit_code)
-    {
-        println!("{}\n{}", filtered, hint);
-    } else {
-        println!("{}", filtered);
-    }
+    println!(
+        "{}",
+        render_test_output(&filtered, &combined, &tee_label, result.exit_code)
+    );
 
     timer.track(
         format!("{} run", framework).as_str(),
         format!("rtk {} run", framework).as_str(),
         &combined,
-        &filtered,
+        &filtered.text,
     );
 
     if !result.success() {
@@ -272,6 +277,27 @@ pub fn run_test(command: &Commands, args: &[String], verbose: u8) -> Result<i32>
 struct EffectiveVitestArgs {
     args: Vec<String>,
     passthrough: bool,
+}
+
+struct FormattedTestOutput {
+    text: String,
+    truncated: bool,
+}
+
+impl FormattedTestOutput {
+    fn new(text: String) -> Self {
+        Self {
+            text,
+            truncated: false,
+        }
+    }
+
+    fn truncated(text: String) -> Self {
+        Self {
+            text,
+            truncated: true,
+        }
+    }
 }
 
 fn build_vitest_effective_args(args: &[String]) -> EffectiveVitestArgs {
@@ -310,33 +336,86 @@ fn format_test_output(
     combined: &str,
     passthrough_requested: bool,
     verbose: u8,
-) -> String {
+) -> FormattedTestOutput {
     if passthrough_requested {
-        return truncate_passthrough(combined);
+        return format_passthrough_output(combined);
     }
 
     let parse_result = VitestParser::parse(stdout);
     let mode = FormatMode::from_verbosity(verbose);
-    let filtered = match parse_result {
+    match parse_result {
         ParseResult::Full(data) => {
             if verbose > 0 {
                 eprintln!("{} run (Tier 1: Full JSON parse)", framework);
             }
-            data.format(mode)
+            FormattedTestOutput::new(data.format(mode))
         }
         ParseResult::Degraded(data, warnings) => {
             if verbose > 0 {
                 emit_degradation_warning(framework, &warnings.join(", "));
             }
-            data.format(mode)
+            FormattedTestOutput::new(data.format(mode))
         }
-        ParseResult::Passthrough(raw) => {
+        ParseResult::Passthrough(_) => {
             emit_passthrough_warning(framework, "All parsing tiers failed");
-            raw
+            format_passthrough_output(stdout)
         }
+    }
+}
+
+fn format_passthrough_output(raw: &str) -> FormattedTestOutput {
+    let max_chars = crate::core::config::limits().passthrough_max_chars;
+    format_passthrough_output_with_limit(raw, max_chars)
+}
+
+fn format_passthrough_output_with_limit(raw: &str, max_chars: usize) -> FormattedTestOutput {
+    let text = truncate_output(raw, max_chars);
+
+    if raw.chars().count() > max_chars {
+        FormattedTestOutput::truncated(text)
+    } else {
+        FormattedTestOutput::new(text)
+    }
+}
+
+fn render_test_output(
+    filtered: &FormattedTestOutput,
+    raw: &str,
+    tee_label: &str,
+    exit_code: i32,
+) -> String {
+    render_test_output_with_hints(
+        filtered,
+        raw,
+        tee_label,
+        exit_code,
+        crate::core::tee::force_tee_hint,
+        crate::core::tee::tee_and_hint,
+    )
+}
+
+fn render_test_output_with_hints<F, T>(
+    filtered: &FormattedTestOutput,
+    raw: &str,
+    tee_label: &str,
+    exit_code: i32,
+    force_hint: F,
+    tee_hint: T,
+) -> String
+where
+    F: FnOnce(&str, &str) -> Option<String>,
+    T: FnOnce(&str, &str, i32) -> Option<String>,
+{
+    let hint = if filtered.truncated {
+        force_hint(raw, tee_label)
+    } else {
+        tee_hint(raw, tee_label, exit_code)
     };
 
-    filtered
+    match hint {
+        Some(hint) => format!("{}\n{}", filtered.text, hint),
+        None => filtered.text.clone(),
+    }
 }
 
 #[cfg(test)]
@@ -500,8 +579,36 @@ Scope: all 6 workspace projects
 
         let filtered = format_test_output("vitest", output, output, true, 0);
 
-        assert!(filtered.contains("keeps docs path"));
-        assert!(filtered.contains("keeps app path"));
-        assert!(filtered.contains("Tests  2 passed"));
+        assert!(filtered.text.contains("keeps docs path"));
+        assert!(filtered.text.contains("keeps app path"));
+        assert!(filtered.text.contains("Tests  2 passed"));
+        assert!(!filtered.truncated);
+    }
+
+    #[test]
+    fn test_vitest_explicit_reporter_truncated_output_adds_recovery_hint() {
+        let output = format!(
+            "{}\n Test Files  1 passed (1)\n      Tests  80 passed (80)\n",
+            " ✓ constants/publicPaths.test.ts > public paths > keeps verbose case\n".repeat(80)
+        );
+
+        let filtered = format_passthrough_output_with_limit(&output, 200);
+        let rendered = render_test_output_with_hints(
+            &filtered,
+            &output,
+            "vitest_run",
+            0,
+            |raw, label| {
+                assert_eq!(raw, output);
+                assert_eq!(label, "vitest_run");
+                Some("[full output: /tmp/vitest_run.log]".to_string())
+            },
+            |_, _, _| Some("[full output: wrong-path.log]".to_string()),
+        );
+
+        assert!(filtered.truncated);
+        assert!(rendered.contains("[RTK:PASSTHROUGH] Output truncated"));
+        assert!(rendered.contains("[full output: /tmp/vitest_run.log]"));
+        assert!(!rendered.contains("wrong-path.log"));
     }
 }
