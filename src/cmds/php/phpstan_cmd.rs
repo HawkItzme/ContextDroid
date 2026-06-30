@@ -54,10 +54,7 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
 
     // Utility commands (--version, list, clear-result-cache, worker, …): real passthrough.
     // Only analyse/analyze subcommands get filtered and token-tracked.
-    let is_analyse = args
-        .first()
-        .map(|a| a == "analyse" || a == "analyze")
-        .unwrap_or(false);
+    let is_analyse = is_analyse_command(args);
 
     if !is_analyse {
         if verbose > 0 {
@@ -68,30 +65,13 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
         return Ok(exit_code_from_status(&status, "phpstan"));
     }
 
-    // Detect if user specified a custom output format (not json).
-    // Handles both `--error-format=table` and `--error-format table` forms.
-    let has_custom_format = {
-        let mut it = args.iter().peekable();
-        let mut found = false;
-        while let Some(a) = it.next() {
-            if a == "--error-format" {
-                if it.peek().map(|v| v.as_str()) != Some("json") {
-                    found = true;
-                }
-                break;
-            }
-            if a.starts_with("--error-format=") && a != "--error-format=json" {
-                found = true;
-                break;
-            }
-        }
-        found
-    };
+    // Detect whether the user already chose an output format. When they passed
+    // `--error-format=json` we must NOT append a second one; only inject json
+    // when no format is present.
+    let fmt = detect_error_format(args);
 
-    // Pass user args first (subcommand must come before global flags for PHPStan),
-    // then append --error-format=json unless the user specified a custom format.
     cmd.args(args);
-    if !has_custom_format {
+    if matches!(fmt, ErrorFormat::Unspecified) {
         cmd.arg("--error-format").arg("json");
     }
 
@@ -99,12 +79,13 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
         eprintln!("Running: phpstan {}", args.join(" "));
     }
 
+    let use_text = matches!(fmt, ErrorFormat::Custom);
     runner::run_filtered(
         cmd,
         "phpstan",
         &args.join(" "),
         move |stdout| {
-            if has_custom_format {
+            if use_text {
                 filter_phpstan_text(stdout)
             } else {
                 filter_phpstan_json(stdout)
@@ -112,6 +93,44 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
         },
         runner::RunOptions::stdout_only().tee("phpstan"),
     )
+}
+
+/// True when the invocation runs the `analyse`/`analyze` subcommand. The
+/// subcommand may appear after global options (`phpstan -c x.neon analyse src/`),
+/// so scan every arg rather than just the first.
+fn is_analyse_command(args: &[String]) -> bool {
+    args.iter().any(|a| a == "analyse" || a == "analyze")
+}
+
+/// Which `--error-format` the user requested, if any.
+enum ErrorFormat {
+    /// No format flag — rtk injects `--error-format=json`.
+    Unspecified,
+    /// User explicitly asked for json — keep it, don't duplicate the flag.
+    Json,
+    /// User asked for a non-json format — leave args alone, use the text filter.
+    Custom,
+}
+
+/// Parse `--error-format=<v>` / `--error-format <v>` from the args.
+fn detect_error_format(args: &[String]) -> ErrorFormat {
+    let mut it = args.iter().peekable();
+    while let Some(a) = it.next() {
+        if a == "--error-format" {
+            return match it.peek().map(|v| v.as_str()) {
+                Some("json") => ErrorFormat::Json,
+                _ => ErrorFormat::Custom,
+            };
+        }
+        if let Some(val) = a.strip_prefix("--error-format=") {
+            return if val == "json" {
+                ErrorFormat::Json
+            } else {
+                ErrorFormat::Custom
+            };
+        }
+    }
+    ErrorFormat::Unspecified
 }
 
 // ── JSON filtering ───────────────────────────────────────────────────────────
@@ -187,6 +206,11 @@ pub(crate) fn filter_phpstan_json(output: &str) -> String {
 // ── Text fallback ────────────────────────────────────────────────────────────
 
 pub(crate) fn filter_phpstan_text(output: &str) -> String {
+    // The text path matches on substrings ("[OK]", "Found N errors"); strip
+    // ANSI first so `--ansi` colorized output still matches.
+    let cleaned = super::utils::strip_ansi_and_controls(output);
+    let output = cleaned.as_str();
+
     // Check for errors first
     for line in output.lines() {
         let t = line.trim();
@@ -470,6 +494,54 @@ Found 5 errors in 3 files"#;
 "#;
         let result = filter_phpstan_text(text);
         assert_eq!(result, "PHPStan: [ERROR] Found 2 errors");
+    }
+
+    fn args(s: &[&str]) -> Vec<String> {
+        s.iter().map(|a| a.to_string()).collect()
+    }
+
+    #[test]
+    fn test_is_analyse_detects_subcommand_after_global_flag() {
+        // Regression: `phpstan -c phpstan.neon analyse src/` must be filtered.
+        assert!(is_analyse_command(&args(&[
+            "-c",
+            "phpstan.neon",
+            "analyse",
+            "src/"
+        ])));
+        assert!(is_analyse_command(&args(&["analyze", "src/"])));
+        assert!(!is_analyse_command(&args(&["--version"])));
+        assert!(!is_analyse_command(&args(&["clear-result-cache"])));
+    }
+
+    #[test]
+    fn test_detect_error_format() {
+        assert!(matches!(
+            detect_error_format(&args(&["analyse", "src/"])),
+            ErrorFormat::Unspecified
+        ));
+        assert!(matches!(
+            detect_error_format(&args(&["analyse", "--error-format", "json"])),
+            ErrorFormat::Json
+        ));
+        assert!(matches!(
+            detect_error_format(&args(&["analyse", "--error-format=json"])),
+            ErrorFormat::Json
+        ));
+        assert!(matches!(
+            detect_error_format(&args(&["analyse", "--error-format", "table"])),
+            ErrorFormat::Custom
+        ));
+        assert!(matches!(
+            detect_error_format(&args(&["analyse", "--error-format=table"])),
+            ErrorFormat::Custom
+        ));
+    }
+
+    #[test]
+    fn test_filter_phpstan_text_strips_ansi() {
+        let text = "\x1b[32m [OK] No errors\x1b[0m";
+        assert_eq!(filter_phpstan_text(text), "phpstan: ok");
     }
 
     #[test]
