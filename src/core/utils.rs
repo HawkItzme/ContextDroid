@@ -11,6 +11,7 @@ use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::OnceLock;
 
 /// Truncates a string to `max_len` characters, appending `...` if needed.
 ///
@@ -363,9 +364,17 @@ pub fn resolved_command(name: &str) -> Command {
 /// or `composer.json` `config.bin-dir`. Keep the default as a fallback so we
 /// continue recognizing the common layout even when the repo is not configured.
 pub fn composer_bin_dirs() -> Vec<PathBuf> {
-    let env_bin_dir = std::env::var("COMPOSER_BIN_DIR").ok();
-    let composer_json = fs::read_to_string("composer.json").ok();
-    composer_bin_dirs_from(env_bin_dir.as_deref(), composer_json.as_deref())
+    // Resolution depends only on the process's env + cwd composer.json, both
+    // constant for a single rtk invocation. The rewrite hot path queries this
+    // several times per command segment, so read the file once and cache.
+    static CACHE: OnceLock<Vec<PathBuf>> = OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            let env_bin_dir = std::env::var("COMPOSER_BIN_DIR").ok();
+            let composer_json = fs::read_to_string("composer.json").ok();
+            composer_bin_dirs_from(env_bin_dir.as_deref(), composer_json.as_deref())
+        })
+        .clone()
 }
 
 pub fn composer_tool_paths(tool: &str) -> Vec<PathBuf> {
