@@ -179,7 +179,7 @@ RTK executes shell commands on behalf of the user, so security is a first-class 
 
 **Hook integrity.** RTK verifies hook files via SHA-256 hashes before operational commands. If a hook has been tampered with, RTK exits with code 1. See [`src/hooks/integrity.rs`](../../src/hooks/integrity.rs).
 
-**Filter trust.** Both the project-local `.rtk/filters.toml` and the user-global `~/.config/rtk/filters.toml` are gated: filters are not loaded until the user explicitly trusts them (`rtk trust`, which prints the rules first), and any content change requires re-trust (SHA-256). `rtk init` lets you enable existing filters interactively (or `--trust-filters` / `--no-trust-filters` for non-interactive use). This is cross-platform consent + tamper-evidence, not a sandbox — a same-UID attacker who can also write the trust store (`trusted_filters.json`) can bypass it. See [`src/hooks/trust.rs`](../../src/hooks/trust.rs).
+**Project filter trust.** `.rtk/filters.toml` files are not loaded until the user explicitly trusts them, and content changes require re-trust. See [`src/hooks/trust.rs`](../../src/hooks/trust.rs).
 
 **Permission whitelist.** `is_operational_command()` in `main.rs` uses a whitelist pattern — new commands are *not* integrity-checked until explicitly added. This is an intentional security posture: fail-open with an audit trail is preferred over false confidence.
 
