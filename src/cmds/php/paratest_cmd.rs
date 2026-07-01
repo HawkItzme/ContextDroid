@@ -73,4 +73,36 @@ mod tests {
             filtered
         );
     }
+
+    #[test]
+    fn test_paratest_token_savings() {
+        use crate::core::utils::count_tokens;
+
+        // A realistic passing run: banner + config + many parallel-worker
+        // progress lines, collapsing to a one-line summary.
+        let mut output = String::from(
+            "ParaTest v7.3.0 upon PHPUnit 10.5.0 by Sebastian Bergmann and contributors.\n\
+             Runtime:       PHP 8.3.10\n\
+             Configuration: /var/www/html/phpunit.xml\n\
+             Random Seed:   1234567890\n\n",
+        );
+        for i in 1..=40 {
+            output.push_str(&format!(
+                "..........................................  {} / 40 ({}%)\n",
+                i,
+                i * 100 / 40
+            ));
+        }
+        output.push_str("\nOK (400 tests, 1200 assertions)\n");
+
+        let filtered = filter_test_runner_output(&output);
+        let savings =
+            100.0 - (count_tokens(&filtered) as f64 / count_tokens(&output) as f64 * 100.0);
+        assert!(
+            savings >= 60.0,
+            "expected ≥60% savings, got {:.1}%\n{}",
+            savings,
+            filtered
+        );
+    }
 }
