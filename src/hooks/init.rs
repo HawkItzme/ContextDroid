@@ -1461,7 +1461,8 @@ pub fn finalize_filter_trust(global: bool, dry_run: bool, trust: FilterTrust) ->
         return Ok(());
     }
 
-    crate::hooks::trust::print_filter_notice(path, &filters);
+    let scope = if global { "global" } else { "project" };
+    crate::hooks::trust::print_filter_notice(path, scope, &filters);
 
     let enable = match trust {
         FilterTrust::Trust => true,

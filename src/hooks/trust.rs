@@ -197,12 +197,20 @@ pub fn list_trusted() -> Result<HashMap<String, TrustEntry>> {
 }
 
 pub fn gated_filter_paths() -> Vec<PathBuf> {
-    let mut paths = vec![PathBuf::from(".rtk/filters.toml")];
+    gated_filter_paths_labeled()
+        .into_iter()
+        .map(|(_, path)| path)
+        .collect()
+}
+
+pub fn gated_filter_paths_labeled() -> Vec<(&'static str, PathBuf)> {
+    let mut paths = vec![("project", PathBuf::from(".rtk/filters.toml"))];
     if let Some(dir) = dirs::config_dir() {
-        paths.push(
+        paths.push((
+            "global",
             dir.join(RTK_DATA_DIR)
                 .join(crate::core::constants::FILTERS_TOML),
-        );
+        ));
     }
     paths
 }
@@ -231,7 +239,7 @@ pub fn run_trust(list: bool, yes: bool) -> Result<()> {
 
     let mut found_any = false;
     let mut trusted_any = false;
-    for filter_path in gated_filter_paths() {
+    for (scope, filter_path) in gated_filter_paths_labeled() {
         if !filter_path.exists() {
             continue;
         }
@@ -243,7 +251,7 @@ pub fn run_trust(list: bool, yes: bool) -> Result<()> {
             continue;
         }
         found_any = true;
-        print_filter_notice(&filter_path, &filters);
+        print_filter_notice(&filter_path, scope, &filters);
         print_risk_summary(&content);
 
         if !(yes || confirm_enable_at_tty()?) {
@@ -265,12 +273,12 @@ pub fn run_trust(list: bool, yes: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn print_filter_notice(path: &Path, filters: &[(String, String)]) {
+pub fn print_filter_notice(path: &Path, scope: &str, filters: &[(String, String)]) {
     let yellow = "\x1b[33m";
     let reset = "\x1b[0m";
     eprintln!();
     eprintln!(
-        "{yellow}Detected {} custom filter(s) in {} — they rewrite matching command output:{reset}",
+        "{yellow}Detected {} custom {scope} scoped toml filter(s) in {} — they rewrite matching command output:{reset}",
         filters.len(),
         path.display()
     );
