@@ -809,11 +809,10 @@ fn merge_diag_counts(error_count: usize, warnings: usize, json: &JsonDiagnostics
 }
 
 fn cargo_build_success_line(compiled: usize, finished: Option<&str>) -> String {
-    let mut s = format!("cargo build ({} crates compiled)", compiled);
-    if let Some(f) = finished {
-        s = format!("{}\n{}", s, f);
+    match finished {
+        Some(f) => format!("cargo build ({} crates compiled)\n{}\n", compiled, f),
+        None => format!("cargo build ({} crates compiled)\n", compiled),
     }
-    format!("{}\n", s)
 }
 
 fn cargo_build_failure_summary(
