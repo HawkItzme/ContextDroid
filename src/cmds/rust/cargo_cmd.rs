@@ -202,7 +202,7 @@ impl BlockHandler for CargoTestHandler {
             let json = extract_json_diagnostics(raw);
             if self.has_compile_errors || !json.errors.is_empty() {
                 let build_filtered = filter_cargo_build_labeled(raw, "test");
-                if !build_filtered.is_empty() {
+                if build_filtered.contains("cargo test:") {
                     return Some(format!("{}\n", build_filtered));
                 }
                 // Fallback: last 5 meaningful lines
@@ -1189,7 +1189,7 @@ pub(crate) fn filter_cargo_test(output: &str) -> String {
 
         if has_compile_errors {
             let build_filtered = filter_cargo_build_labeled(output, "test");
-            if !build_filtered.is_empty() {
+            if build_filtered.contains("cargo test:") {
                 return build_filtered;
             }
         }
@@ -2695,5 +2695,24 @@ error: could not compile `rtk` (test "repro_compile_fail") due to 1 previous err
         assert!(result.contains("cargo test:"), "got: {}", result);
         assert!(result.contains("1 errors"), "got: {}", result);
         assert!(result.contains("E0425"), "diagnostic must be surfaced: {}", result);
+    }
+
+    #[test]
+    fn test_cargo_test_stream_no_diagnostic_falls_back_to_raw() {
+        // "could not compile" sets has_compile_errors but is skipped by the build
+        // re-scan, so the reused filter yields a success-shaped line. We must not
+        // trust it — fall back to the raw tail instead of a bogus "compiled".
+        let input = concat!(
+            "   Compiling foo v0.1.0 (/tmp/foo)\n",
+            "error: could not compile `foo` (test \"bar\") due to previous error\n",
+        );
+        let mut f = BlockStreamFilter::new(CargoTestHandler::new());
+        let result = run_block_filter(&mut f, input, 101);
+        assert!(
+            !result.contains("crates compiled"),
+            "must not report a failed test run as compiled: {}",
+            result
+        );
+        assert!(result.contains("could not compile"), "got: {}", result);
     }
 }
