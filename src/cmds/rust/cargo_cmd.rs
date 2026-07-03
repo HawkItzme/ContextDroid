@@ -314,20 +314,18 @@ fn run_cargo_streamed(
 }
 
 fn has_json_message_format(args: &[String]) -> bool {
+    let mut json = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
-        if arg.starts_with("--message-format=") && arg.contains("json") {
-            return true;
-        }
-        if arg == "--message-format" {
+        if let Some(val) = arg.strip_prefix("--message-format=") {
+            json = val.contains("json");
+        } else if arg == "--message-format" {
             if let Some(val) = iter.next() {
-                if val.contains("json") {
-                    return true;
-                }
+                json = val.contains("json");
             }
         }
     }
-    false
+    json
 }
 
 fn run_build(args: &[String], verbose: u8) -> Result<i32> {
@@ -2489,6 +2487,18 @@ error: aborting due to 1 previous error
     #[test]
     fn test_json_format_trailing_message_format_no_value() {
         assert!(!has_json_message_format(&["--message-format".into()]));
+    }
+
+    #[test]
+    fn test_json_format_last_occurrence_wins() {
+        assert!(!has_json_message_format(&[
+            "--message-format=json".into(),
+            "--message-format=human".into(),
+        ]));
+        assert!(has_json_message_format(&[
+            "--message-format=human".into(),
+            "--message-format=json".into(),
+        ]));
     }
 
     #[test]
