@@ -4,7 +4,7 @@ use crate::core::args_utils;
 use crate::core::runner;
 use crate::core::stream::{BlockHandler, BlockStreamFilter, StreamFilter};
 use crate::core::truncate::{CAP_ERRORS, CAP_LIST, CAP_WARNINGS};
-use crate::core::utils::{resolved_command, truncate};
+use crate::core::utils::{join_with_overflow, resolved_command, truncate};
 use anyhow::Result;
 use serde::Deserialize;
 use std::cmp::Ordering;
@@ -876,23 +876,29 @@ fn cargo_build_failure_summary(
     json: &JsonDiagnostics,
     label: &str,
 ) -> String {
-    let mut out = String::new();
-    for d in json.errors.iter().take(CAP_ERRORS) {
-        out.push_str(d);
-        out.push('\n');
-    }
-    if json.errors.len() > CAP_ERRORS {
-        out.push_str(&format!("… +{} more errors\n", json.errors.len() - CAP_ERRORS));
-    }
-    for d in json.warnings.iter().take(CAP_WARNINGS) {
-        out.push_str(d);
-        out.push('\n');
-    }
-    if json.warnings.len() > CAP_WARNINGS {
-        out.push_str(&format!(
-            "… +{} more warnings\n",
-            json.warnings.len() - CAP_WARNINGS
+    let mut out = format!(
+        "cargo {}: {} errors, {} warnings ({} crates)\n",
+        label, errors, warnings, compiled
+    );
+    if !json.errors.is_empty() {
+        let shown: Vec<String> = json.errors.iter().take(CAP_ERRORS).cloned().collect();
+        out.push_str(&join_with_overflow(
+            &shown,
+            json.errors.len(),
+            CAP_ERRORS,
+            "errors",
         ));
+        out.push('\n');
+    }
+    if !json.warnings.is_empty() {
+        let shown: Vec<String> = json.warnings.iter().take(CAP_WARNINGS).cloned().collect();
+        out.push_str(&join_with_overflow(
+            &shown,
+            json.warnings.len(),
+            CAP_WARNINGS,
+            "warnings",
+        ));
+        out.push('\n');
     }
     if json.errors.len() > CAP_ERRORS || json.warnings.len() > CAP_WARNINGS {
         let full = json
@@ -906,10 +912,6 @@ fn cargo_build_failure_summary(
             out.push_str(&format!("  {}\n", hint));
         }
     }
-    out.push_str(&format!(
-        "cargo {}: {} errors, {} warnings ({} crates)\n",
-        label, errors, warnings, compiled
-    ));
     out
 }
 
@@ -2417,6 +2419,20 @@ error: aborting due to 1 previous error
         let result = filter_cargo_clippy_json(input);
         assert!(result.contains("unused variable"), "got: {}", result);
         assert!(result.contains("cargo clippy: 0 errors, 1 warnings"), "got: {}", result);
+    }
+
+    #[test]
+    fn test_failure_summary_line_is_first() {
+        let json = JsonDiagnostics {
+            errors: vec!["error[E0308]: mismatched types".to_string()],
+            warnings: Vec::new(),
+        };
+        let out = cargo_build_failure_summary(1, 1, 0, &json, "build");
+        assert!(
+            out.starts_with("cargo build: 1 errors"),
+            "summary line must come first: {}",
+            out
+        );
     }
 
     #[test]
