@@ -775,6 +775,37 @@ pub const RULES: &[RtkRule] = &[
         subcmd_savings: &[],
         subcmd_status: &[],
     },
+    // Task runners (mise, just, task/go-task). The hook rewrites the invocation
+    // so it flows through run_fallback, which applies the matching TOML filter
+    // (src/filters/{mise,just,task}.toml) to strip runner boilerplate. Patterns
+    // mirror each filter's `match_command` scope. See issue #607.
+    RtkRule {
+        pattern: r"^mise\s+(run|exec|install|upgrade)(\s|$)",
+        rtk_cmd: "rtk mise",
+        rewrite_prefixes: &["mise"],
+        category: "Build",
+        savings_pct: 40.0,
+        subcmd_savings: &[],
+        subcmd_status: &[],
+    },
+    RtkRule {
+        pattern: r"^just\b",
+        rtk_cmd: "rtk just",
+        rewrite_prefixes: &["just"],
+        category: "Build",
+        savings_pct: 40.0,
+        subcmd_savings: &[],
+        subcmd_status: &[],
+    },
+    RtkRule {
+        pattern: r"^task\b",
+        rtk_cmd: "rtk task",
+        rewrite_prefixes: &["task"],
+        category: "Build",
+        savings_pct: 40.0,
+        subcmd_savings: &[],
+        subcmd_status: &[],
+    },
     RtkRule {
         pattern: r"^markdownlint\b",
         rtk_cmd: "rtk markdownlint",

@@ -1064,6 +1064,60 @@ mod tests {
         );
     }
 
+    // --- Task runners: mise, just, task (#607) ---
+
+    #[test]
+    fn test_classify_mise_run() {
+        assert!(matches!(
+            classify_command("mise run lint"),
+            Classification::Supported {
+                rtk_equivalent: "rtk mise",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_rewrite_mise_run() {
+        assert_eq!(
+            rewrite_command_no_prefixes("mise run lint", &[]),
+            Some("rtk mise run lint".to_string())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_mise_exec_and_install() {
+        assert_eq!(
+            rewrite_command_no_prefixes("mise exec -- node -v", &[]),
+            Some("rtk mise exec -- node -v".to_string())
+        );
+        assert_eq!(
+            rewrite_command_no_prefixes("mise install node", &[]),
+            Some("rtk mise install node".to_string())
+        );
+    }
+
+    #[test]
+    fn test_mise_non_task_subcommands_not_rewritten() {
+        // Only run/exec/install/upgrade are compressed by mise.toml; other
+        // subcommands (ls, activate, which) must pass through untouched so we
+        // never wrap shell-integration output like `eval "$(mise activate)"`.
+        assert_eq!(rewrite_command_no_prefixes("mise ls", &[]), None);
+        assert_eq!(rewrite_command_no_prefixes("mise activate bash", &[]), None);
+    }
+
+    #[test]
+    fn test_rewrite_just_and_task() {
+        assert_eq!(
+            rewrite_command_no_prefixes("just test", &[]),
+            Some("rtk just test".to_string())
+        );
+        assert_eq!(
+            rewrite_command_no_prefixes("task build", &[]),
+            Some("rtk task build".to_string())
+        );
+    }
+
     #[test]
     fn test_classify_cat_file() {
         assert_eq!(
