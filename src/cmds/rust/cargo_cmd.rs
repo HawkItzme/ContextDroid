@@ -374,6 +374,10 @@ fn run_build(args: &[String], verbose: u8) -> Result<i32> {
 }
 
 fn run_test(args: &[String], verbose: u8) -> Result<i32> {
+    // No json branch here on purpose: --message-format=json only reformats the
+    // build phase, the test harness output stays human-readable. CargoTestHandler
+    // reads both — it aggregates the `test result:` lines and, on a compile error,
+    // parses the json diagnostics in format_summary.
     run_cargo_streamed(
         "test",
         args,
