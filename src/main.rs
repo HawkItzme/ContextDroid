@@ -55,7 +55,7 @@ pub enum AgentTarget {
 #[derive(Parser)]
 #[command(
     name = "rtk",
-    version,
+    version = concat!(env!("CARGO_PKG_VERSION"), " (OSS)"),
     about = "Rust Token Killer - Minimize LLM token consumption",
     long_about = "A high-performance CLI proxy designed to filter and summarize system outputs before they reach your LLM context."
 )]
@@ -840,6 +840,43 @@ enum Commands {
     Hook {
         #[command(subcommand)]
         command: HookCommands,
+    },
+
+    /// Update rtk to the latest version of the current edition
+    Update {
+        /// Show edition, install method and available versions without changing anything
+        #[arg(long)]
+        check: bool,
+        /// Restore the previous binary kept by the last update
+        #[arg(long)]
+        rollback: bool,
+        /// Skip confirmation prompts
+        #[arg(short, long)]
+        yes: bool,
+    },
+
+    /// Upgrade from rtk OSS to the Plus edition (keeps the same `rtk` command)
+    Upgrade {
+        /// Skip confirmation prompts
+        #[arg(short, long)]
+        yes: bool,
+    },
+
+    /// Downgrade from the Plus edition back to rtk OSS
+    Downgrade {
+        /// Skip confirmation prompts
+        #[arg(short, long)]
+        yes: bool,
+    },
+
+    /// Uninstall rtk from this machine
+    Uninstall {
+        /// Skip confirmation prompts
+        #[arg(short, long)]
+        yes: bool,
+        /// Also remove rtk config and data directories
+        #[arg(long)]
+        purge: bool,
     },
 }
 
@@ -2624,6 +2661,32 @@ fn run_cli() -> Result<i32> {
                 hooks::verify_cmd::run(None, require_all)?;
             }
             0
+        }
+
+        Commands::Update {
+            check,
+            rollback,
+            yes,
+        } => core::distribution::update(
+            core::distribution::Edition::Oss,
+            env!("CARGO_PKG_VERSION"),
+            check,
+            rollback,
+            yes,
+        )?,
+
+        Commands::Upgrade { yes } => core::distribution::upgrade(
+            core::distribution::Edition::Oss,
+            env!("CARGO_PKG_VERSION"),
+            yes,
+        )?,
+
+        Commands::Downgrade { yes } => {
+            core::distribution::downgrade(core::distribution::Edition::Oss, yes)?
+        }
+
+        Commands::Uninstall { yes, purge } => {
+            core::distribution::uninstall(core::distribution::Edition::Oss, yes, purge)?
         }
     };
 
