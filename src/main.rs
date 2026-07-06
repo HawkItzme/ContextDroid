@@ -623,6 +623,26 @@ enum Commands {
         args: Vec<OsString>,
     },
 
+    /// Recall output a filter elided, by content hash
+    Recall {
+        hash: Option<String>,
+        /// Return the complete output, not just the missed part
+        #[arg(long)]
+        full: bool,
+        #[arg(long)]
+        from: Option<usize>,
+        #[arg(long, conflicts_with = "from")]
+        lines: Option<usize>,
+        /// Filter recalled lines by regex
+        #[arg(long)]
+        grep: Option<String>,
+        /// Latest entry for a command instead of a hash
+        #[arg(long, conflicts_with = "hash")]
+        command: Option<String>,
+        #[arg(long)]
+        list: bool,
+    },
+
     /// Read stdin, apply filter, print filtered output (Unix pipe mode)
     Pipe {
         /// Filter name (cargo-test, pytest, grep, find, git-log, etc.)
@@ -1171,6 +1191,7 @@ const RTK_META_COMMANDS: &[&str] = &[
     "init",
     "config",
     "proxy",
+    "recall",
     "run",
     "hook",
     "hook-audit",
@@ -2324,6 +2345,24 @@ fn run_cli() -> Result<i32> {
                 status.code().unwrap_or(1)
             }
         }
+
+        Commands::Recall {
+            hash,
+            full,
+            from,
+            lines,
+            grep,
+            command,
+            list,
+        } => core::retriever::run_recall(core::retriever::RecallArgs {
+            hash: hash.as_deref(),
+            command: command.as_deref(),
+            full,
+            from,
+            lines,
+            grep: grep.as_deref(),
+            list,
+        })?,
 
         Commands::Proxy { args } => {
             use std::io::{Read, Write};

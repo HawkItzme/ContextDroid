@@ -14,7 +14,7 @@ pub struct Config {
     #[serde(default)]
     pub filters: FilterConfig,
     #[serde(default)]
-    pub tee: crate::core::tee::TeeConfig,
+    pub retriever: crate::core::retriever::RetrieverConfig,
     #[serde(default)]
     pub telemetry: TelemetryConfig,
     #[serde(default)]
