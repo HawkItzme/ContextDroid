@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 use crate::core::utils::resolved_command;
 
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
-const BINARY_NAMES: &[&str] = &["rtk", "rtk-plus"];
+const BINARY_NAMES: &[&str] = &["rtk"];
 
 pub fn backup_path(target: &Path) -> PathBuf {
     let name = target
@@ -25,10 +25,6 @@ pub fn backup_path(target: &Path) -> PathBuf {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "rtk".to_string());
     target.with_file_name(format!("{}.bak", name))
-}
-
-pub fn sibling_path(target: &Path) -> PathBuf {
-    target.with_file_name("rtk-plus")
 }
 
 /// Download, verify and atomically install a release tarball over `target`.
@@ -261,14 +257,15 @@ mod tests {
     }
 
     #[test]
-    fn test_swap_accepts_suffixed_binary_name() {
+    fn test_swap_rejects_unknown_binary_name() {
         let tmp = tempfile::tempdir().unwrap();
         let target = tmp.path().join("rtk");
-        let tar = make_tarball(tmp.path(), "rtk-plus", "plus-binary");
+        fs::write(&target, "old-binary").unwrap();
+        let tar = make_tarball(tmp.path(), "other-tool", "other-binary");
         let (url, sha) = serve_tarball(&tar);
 
-        download_and_swap(&url, Some(&sha), &target).unwrap();
-        assert_eq!(fs::read_to_string(&target).unwrap(), "plus-binary");
+        assert!(download_and_swap(&url, Some(&sha), &target).is_err());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "old-binary");
     }
 
     #[test]

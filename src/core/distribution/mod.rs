@@ -1,11 +1,10 @@
-//! Self-managed install lifecycle: `rtk update` / `upgrade` / `downgrade`
-//! / `uninstall`.
+//! Self-managed install lifecycle: `rtk update` / `rtk uninstall`.
 //!
-//! One engine drives every flow: resolve the release on the edition's
-//! channel, verify, atomically swap the binary at its own path. The `rtk`
-//! name always has exactly one owner — mutating verbs refuse on
-//! brew-managed or system-package installs instead of creating a second
-//! copy on PATH (Homebrew transitions arrive in a later phase).
+//! One engine drives both flows: resolve the latest GitHub release, verify
+//! its checksum, atomically swap the binary at its own path. The `rtk` name
+//! always has exactly one owner — mutating verbs refuse on brew-managed or
+//! system-package installs instead of creating a second copy on PATH
+//! (Homebrew-aware flows arrive in a later phase).
 
 pub mod channel;
 pub mod detect;
@@ -16,46 +15,15 @@ pub(crate) mod test_http;
 pub mod version;
 
 use std::io::IsTerminal;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
 
-use channel::Channel;
 use detect::InstallMethod;
 
-const LOGIN_HINT: &str = "rtk login --endpoint <your tenant URL>";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Edition {
-    Oss,
-    Plus,
-}
-
-impl Edition {
-    fn channel(&self) -> Channel {
-        match self {
-            Edition::Oss => Channel::Github,
-            Edition::Plus => Channel::Blob,
-        }
-    }
-
-    fn describe(&self) -> &'static str {
-        match self {
-            Edition::Oss => "OSS",
-            Edition::Plus => "Plus",
-        }
-    }
-}
-
-pub fn update(
-    edition: Edition,
-    current_version: &str,
-    check: bool,
-    rollback: bool,
-    yes: bool,
-) -> Result<i32> {
+pub fn update(current_version: &str, check: bool, rollback: bool, yes: bool) -> Result<i32> {
     if check {
-        return status_check(edition, current_version);
+        return status_check(current_version);
     }
     if rollback {
         let target = require_self_managed(&detect::detect()?, "rollback")?;
@@ -69,11 +37,10 @@ pub fn update(
     }
 
     let target = require_self_managed(&detect::detect()?, "update")?;
-    let release = edition.channel().latest(&platform::detect()?)?;
+    let release = channel::latest(&platform::detect()?)?;
     if !version::is_newer(&release.version, current_version) {
         println!(
-            "Already up to date ({} v{})",
-            edition.describe(),
+            "Already up to date (v{})",
             version::numeric(current_version)
         );
         return Ok(0);
@@ -81,8 +48,7 @@ pub fn update(
 
     confirm(
         &format!(
-            "Update {} v{} → v{}?",
-            edition.describe(),
+            "Update rtk v{} → v{}?",
             version::numeric(current_version),
             release.version
         ),
@@ -90,76 +56,18 @@ pub fn update(
     )?;
     swap::download_and_swap(&release.tarball_url, release.sha256.as_deref(), &target)?;
     println!(
-        "Updated to {} v{} (previous binary kept at {})",
-        edition.describe(),
+        "Updated to rtk v{} (previous binary kept at {})",
         release.version,
         swap::backup_path(&target).display()
     );
     Ok(0)
 }
 
-pub fn upgrade(edition: Edition, current_version: &str, yes: bool) -> Result<i32> {
-    if edition == Edition::Plus {
-        println!(
-            "Already on the Plus edition (v{}) — use 'rtk update' to get the latest version.",
-            current_version
-        );
-        return Ok(0);
-    }
-
-    let target = require_self_managed(&detect::detect()?, "upgrade")?;
-    let release = Channel::Blob.latest(&platform::detect()?)?;
-    confirm(
-        &format!(
-            "Upgrade to rtk Plus v{}? This replaces the OSS binary at {} (a backup is kept).",
-            release.version,
-            target.display()
-        ),
-        yes,
-    )?;
-    swap::download_and_swap(&release.tarball_url, release.sha256.as_deref(), &target)?;
-    create_sibling(&target)?;
-    println!(
-        "Upgraded to rtk Plus v{} (OSS binary kept at {})",
-        release.version,
-        swap::backup_path(&target).display()
-    );
-    println!("Activate your license: {}", LOGIN_HINT);
-    Ok(0)
-}
-
-pub fn downgrade(edition: Edition, yes: bool) -> Result<i32> {
-    if edition == Edition::Oss {
-        println!("Already OSS — nothing to do.");
-        return Ok(0);
-    }
-
-    let target = require_self_managed(&detect::detect()?, "downgrade")?;
-    let release = Channel::Github.latest(&platform::detect()?)?;
-    confirm(
-        &format!(
-            "Downgrade to rtk OSS v{}? This replaces the Plus binary at {} (a backup is kept).",
-            release.version,
-            target.display()
-        ),
-        yes,
-    )?;
-    swap::download_and_swap(&release.tarball_url, release.sha256.as_deref(), &target)?;
-    remove_sibling(&target);
-    println!(
-        "Downgraded to rtk OSS v{} (Plus binary kept at {})",
-        release.version,
-        swap::backup_path(&target).display()
-    );
-    Ok(0)
-}
-
-pub fn uninstall(edition: Edition, yes: bool, purge: bool) -> Result<i32> {
+pub fn uninstall(yes: bool, purge: bool) -> Result<i32> {
     let target = require_self_managed(&detect::detect()?, "uninstall")?;
     confirm(
         &format!(
-            "Remove rtk {} from {}?{}",
-            edition.describe(),
+            "Remove rtk from {}?{}",
             target.display(),
             if purge {
                 " Config and data directories will also be removed."
@@ -172,7 +80,6 @@ pub fn uninstall(edition: Edition, yes: bool, purge: bool) -> Result<i32> {
 
     std::fs::remove_file(&target)
         .with_context(|| format!("Failed to remove '{}'", target.display()))?;
-    remove_sibling(&target);
     let _ = std::fs::remove_file(swap::backup_path(&target));
     println!("Removed {}", target.display());
 
@@ -182,10 +89,9 @@ pub fn uninstall(edition: Edition, yes: bool, purge: bool) -> Result<i32> {
     Ok(0)
 }
 
-fn status_check(edition: Edition, current_version: &str) -> Result<i32> {
+fn status_check(current_version: &str) -> Result<i32> {
     let method = detect::detect()?;
     let target = platform::detect()?;
-    println!("edition:    {}", edition.describe());
     println!("version:    {}", current_version);
     println!(
         "binary:     {} ({})",
@@ -200,17 +106,14 @@ fn status_check(edition: Edition, current_version: &str) -> Result<i32> {
             "none"
         }
     );
-    for ch in [Channel::Github, Channel::Blob] {
-        let latest = match ch.latest(&target) {
-            Ok(release) => release.version,
-            Err(e) => format!("unavailable ({:#})", e),
-        };
-        println!("latest {}: {}", ch.describe(), latest);
-    }
-    if let Ok(release) = edition.channel().latest(&target) {
-        if version::is_newer(&release.version, current_version) {
-            println!("update available: v{} — run 'rtk update'", release.version);
+    match channel::latest(&target) {
+        Ok(release) => {
+            println!("latest:     {}", release.version);
+            if version::is_newer(&release.version, current_version) {
+                println!("update available: v{} — run 'rtk update'", release.version);
+            }
         }
+        Err(e) => println!("latest:     unavailable ({:#})", e),
     }
     Ok(0)
 }
@@ -249,26 +152,6 @@ fn confirm(prompt: &str, yes: bool) -> Result<()> {
         Ok(())
     } else {
         bail!("Aborted");
-    }
-}
-
-/// Sibling symlink next to the binary: a backward-compatible alias and an
-/// on-disk edition marker for later phases.
-fn create_sibling(target: &Path) -> Result<()> {
-    #[cfg(unix)]
-    {
-        let sibling = swap::sibling_path(target);
-        let _ = std::fs::remove_file(&sibling);
-        std::os::unix::fs::symlink("rtk", &sibling)
-            .with_context(|| format!("Failed to create '{}'", sibling.display()))?;
-    }
-    Ok(())
-}
-
-fn remove_sibling(target: &Path) {
-    let sibling = swap::sibling_path(target);
-    if sibling.symlink_metadata().is_ok() {
-        let _ = std::fs::remove_file(&sibling);
     }
 }
 
@@ -321,35 +204,5 @@ mod tests {
     #[test]
     fn test_confirm_yes_flag_skips_prompt() {
         assert!(confirm("proceed?", true).is_ok());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn test_sibling_roundtrip() {
-        let tmp = tempfile::tempdir().unwrap();
-        let target = tmp.path().join("rtk");
-        std::fs::write(&target, "bin").unwrap();
-
-        create_sibling(&target).unwrap();
-        let sibling = swap::sibling_path(&target);
-        assert!(sibling.symlink_metadata().unwrap().file_type().is_symlink());
-        assert_eq!(std::fs::read_to_string(&sibling).unwrap(), "bin");
-
-        remove_sibling(&target);
-        assert!(sibling.symlink_metadata().is_err());
-        assert!(target.exists());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn test_create_sibling_replaces_legacy_real_file() {
-        let tmp = tempfile::tempdir().unwrap();
-        let target = tmp.path().join("rtk");
-        std::fs::write(&target, "bin").unwrap();
-        std::fs::write(swap::sibling_path(&target), "legacy-sibling-binary").unwrap();
-
-        create_sibling(&target).unwrap();
-        let sibling = swap::sibling_path(&target);
-        assert!(sibling.symlink_metadata().unwrap().file_type().is_symlink());
     }
 }

@@ -29,7 +29,5 @@ pub const RTK_META_COMMANDS: &[&str] = &[
     "deps",
     "json",
     "update",
-    "upgrade",
-    "downgrade",
     "uninstall",
 ];
