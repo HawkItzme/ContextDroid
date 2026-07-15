@@ -1,0 +1,2 @@
+> Task :app:assembleDebug
+BUILD SUCCESSFUL in 1s

@@ -1,0 +1,2 @@
+> Task :app:mergeDebugResources FAILED
+Duplicate resources: drawable/example_icon

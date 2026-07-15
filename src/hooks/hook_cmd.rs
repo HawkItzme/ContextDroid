@@ -9,7 +9,9 @@ use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use std::io::{self, Read, Write};
 
-use crate::discover::registry::{has_heredoc, rewrite_command};
+use crate::discover::registry::{
+    has_heredoc, rewrite_command_for_profile_with_config, RewriteProfile,
+};
 
 const STDIN_CAP: usize = 1_048_576; // 1 MiB
 
@@ -54,7 +56,10 @@ pub fn run_copilot() -> Result<()> {
     let v: Value = match serde_json::from_str(input) {
         Ok(v) => v,
         Err(e) => {
-            let _ = writeln!(io::stderr(), "[rtk hook] Failed to parse JSON input: {e}");
+            let _ = writeln!(
+                io::stderr(),
+                "[contextdroid hook] Failed to parse JSON input: {e}"
+            );
             return Ok(());
         }
     };
@@ -116,7 +121,12 @@ fn get_rewritten(cmd: &str) -> Option<String> {
         .map(|c| (c.hooks.exclude_commands, c.hooks.transparent_prefixes))
         .unwrap_or_default();
 
-    let rewritten = rewrite_command(cmd, &excluded, &transparent_prefixes)?;
+    let rewritten = rewrite_command_for_profile_with_config(
+        cmd,
+        RewriteProfile::active(),
+        &excluded,
+        &transparent_prefixes,
+    )?;
 
     if rewritten == cmd {
         return None;
@@ -167,7 +177,7 @@ fn handle_vscode(cmd: &str) -> Result<()> {
         "hookSpecificOutput": {
             "hookEventName": PRE_TOOL_USE_KEY,
             "permissionDecision": decision,
-            "permissionDecisionReason": "RTK auto-rewrite",
+            "permissionDecisionReason": "ContextDroid safe auto-rewrite",
             "updatedInput": { "command": rewritten }
         }
     });
@@ -213,7 +223,7 @@ fn copilot_cli_response_from_decision(
     }
 
     let mut response = json!({
-        "permissionDecisionReason": "RTK auto-rewrite",
+        "permissionDecisionReason": "ContextDroid safe auto-rewrite",
         "modifiedArgs": modified,
     });
     if allow {
@@ -286,9 +296,9 @@ fn print_gemini(decision: &str, rewrite: Option<&str>) {
 
 // ── Audit logging ─────────────────────────────────────────────
 
-/// Best-effort audit log when RTK_HOOK_AUDIT=1.
+/// Best-effort audit log when CONTEXTDROID_HOOK_AUDIT=1.
 fn audit_log(action: &str, original: &str, rewritten: &str) {
-    if std::env::var("RTK_HOOK_AUDIT").as_deref() != Ok("1") {
+    if std::env::var("CONTEXTDROID_HOOK_AUDIT").as_deref() != Ok("1") {
         return;
     }
     let _ = audit_log_inner(action, original, rewritten);
@@ -303,8 +313,7 @@ fn sanitize_log_field(s: &str) -> String {
 }
 
 fn audit_log_inner(action: &str, original: &str, rewritten: &str) -> Option<()> {
-    let home = dirs::home_dir()?;
-    let dir = home.join(".local").join("share").join("rtk");
+    let dir = crate::product::data_dir()?;
     std::fs::create_dir_all(&dir).ok()?;
     let path = dir.join("hook-audit.log");
     let mut file = std::fs::OpenOptions::new()
@@ -376,7 +385,7 @@ fn process_claude_payload(v: &Value) -> PayloadAction {
 
     let mut hook_output = json!({
         "hookEventName": PRE_TOOL_USE_KEY,
-        "permissionDecisionReason": "RTK auto-rewrite",
+        "permissionDecisionReason": "ContextDroid safe auto-rewrite",
         "updatedInput": updated_input
     });
 
@@ -406,7 +415,10 @@ pub fn run_claude() -> Result<()> {
     let v: Value = match serde_json::from_str(input) {
         Ok(v) => v,
         Err(e) => {
-            let _ = writeln!(io::stderr(), "[rtk hook] Failed to parse JSON input: {e}");
+            let _ = writeln!(
+                io::stderr(),
+                "[contextdroid hook] Failed to parse JSON input: {e}"
+            );
             return Ok(());
         }
     };
@@ -709,16 +721,12 @@ mod tests {
     }
 
     #[test]
-    fn test_copilot_cli_preserves_env_prefix() {
-        let r = copilot_cli_response(
+    fn test_copilot_cli_env_prefix_passes_through_in_safe_profile() {
+        assert!(copilot_cli_response(
             "RUST_LOG=debug cargo test",
             &cli_args("RUST_LOG=debug cargo test"),
         )
-        .unwrap();
-        assert_eq!(
-            r["modifiedArgs"]["command"],
-            "RUST_LOG=debug rtk cargo test"
-        );
+        .is_none());
     }
 
     #[test]
@@ -753,15 +761,13 @@ mod tests {
     }
 
     #[test]
-    fn test_copilot_cli_cve_safe_forms_still_rewrite() {
-        for cmd in ["git status", "git status 2>&1"] {
-            let r = end_to_end(cmd).unwrap_or_else(|| panic!("expected rewrite for {cmd:?}"));
-            assert_eq!(
-                r["modifiedArgs"]["command"].as_str().unwrap(),
-                format!("rtk {cmd}"),
-                "safe form {cmd:?} must rewrite",
-            );
-        }
+    fn test_copilot_cli_cve_safe_plain_form_rewrites() {
+        let r = end_to_end("git status").expect("expected safe rewrite");
+        assert_eq!(
+            r["modifiedArgs"]["command"].as_str().unwrap(),
+            "contextdroid git status"
+        );
+        assert!(end_to_end("git status 2>&1").is_none());
     }
 
     #[test]
@@ -912,7 +918,7 @@ mod tests {
             .pointer("/hookSpecificOutput/updatedInput/command")
             .and_then(|c| c.as_str())
             .unwrap();
-        assert_eq!(cmd, "rtk git status");
+        assert_eq!(cmd, "contextdroid git status");
     }
 
     #[test]
@@ -921,7 +927,7 @@ mod tests {
         let result = run_claude_inner(&input).unwrap();
         let v: Value = serde_json::from_str(&result).unwrap();
         let updated = &v["hookSpecificOutput"]["updatedInput"];
-        assert_eq!(updated["command"], "rtk git status");
+        assert_eq!(updated["command"], "contextdroid git status");
         assert_eq!(updated["timeout"], 30000);
         assert_eq!(updated["description"], "Check repo status");
     }
@@ -946,9 +952,8 @@ mod tests {
     }
 
     #[test]
-    fn test_claude_fd_dup_redirect_still_rewritten() {
-        // `2>&1` is attestable — the rewrite proceeds as normal.
-        assert!(run_claude_inner(&claude_input("git status 2>&1")).is_some());
+    fn test_claude_fd_dup_redirect_passes_through_in_safe_profile() {
+        assert!(run_claude_inner(&claude_input("git status 2>&1")).is_none());
     }
 
     #[test]
@@ -977,25 +982,13 @@ mod tests {
     }
 
     #[test]
-    fn test_claude_env_prefix_preserved() {
-        let result = run_claude_inner(&claude_input("GIT_PAGER=cat git status")).unwrap();
-        let v: Value = serde_json::from_str(&result).unwrap();
-        let cmd = v
-            .pointer("/hookSpecificOutput/updatedInput/command")
-            .and_then(|c| c.as_str())
-            .unwrap();
-        assert_eq!(cmd, "GIT_PAGER=cat rtk git status");
+    fn test_claude_env_prefix_passes_through_in_safe_profile() {
+        assert!(run_claude_inner(&claude_input("GIT_PAGER=cat git status")).is_none());
     }
 
     #[test]
-    fn test_claude_compound_command() {
-        let result = run_claude_inner(&claude_input("git add . && cargo test")).unwrap();
-        let v: Value = serde_json::from_str(&result).unwrap();
-        let cmd = v
-            .pointer("/hookSpecificOutput/updatedInput/command")
-            .and_then(|c| c.as_str())
-            .unwrap();
-        assert_eq!(cmd, "rtk git add . && rtk cargo test");
+    fn test_claude_compound_command_passes_through_in_safe_profile() {
+        assert!(run_claude_inner(&claude_input("git add . && cargo test")).is_none());
     }
 
     #[test]
@@ -1007,7 +1000,10 @@ mod tests {
         assert_eq!(hook["hookEventName"], PRE_TOOL_USE_KEY);
         // permissionDecision is only set when an explicit allow rule matches;
         // with default-to-ask semantics (no rules configured), it is absent.
-        assert_eq!(hook["permissionDecisionReason"], "RTK auto-rewrite");
+        assert_eq!(
+            hook["permissionDecisionReason"],
+            "ContextDroid safe auto-rewrite"
+        );
         assert!(hook["updatedInput"].is_object());
         assert!(hook["updatedInput"]["command"].is_string());
     }
@@ -1038,7 +1034,7 @@ mod tests {
         let v: Value = serde_json::from_str(&result).unwrap();
         // Cursor preToolUse expects allow/deny for rewrite application.
         assert_eq!(v["permission"], "allow");
-        assert_eq!(v["updated_input"]["command"], "rtk git status");
+        assert_eq!(v["updated_input"]["command"], "contextdroid git status");
         assert!(v.get("hookSpecificOutput").is_none());
         // `continue: true` keeps the Cursor preToolUse panel from collapsing
         // to `Output: {}`; without it the rewrite is invisible to users.
@@ -1099,7 +1095,7 @@ mod tests {
 
     #[test]
     fn test_cursor_no_hook_specific_output() {
-        let result = run_cursor_allowed(&cursor_input("cargo test"));
+        let result = run_cursor_allowed(&cursor_input("git status"));
         let v: Value = serde_json::from_str(&result).unwrap();
         assert!(v.get("hookSpecificOutput").is_none());
         assert_eq!(v["permission"], "allow");
@@ -1107,16 +1103,10 @@ mod tests {
     }
 
     #[test]
-    fn test_cursor_compound_rewrite_includes_continue() {
+    fn test_cursor_compound_command_passes_through_in_safe_profile() {
         let cmd = "cd \"/tmp/proj\" && git status";
         let result = run_cursor_allowed(&cursor_input(cmd));
-        let v: Value = serde_json::from_str(&result).unwrap();
-        assert_eq!(v["continue"], true);
-        assert_eq!(v["permission"], "allow");
-        assert_eq!(
-            v["updated_input"]["command"],
-            "cd \"/tmp/proj\" && rtk git status"
-        );
+        assert_eq!(result, "{}");
     }
 
     #[test]
@@ -1130,14 +1120,14 @@ mod tests {
         let v: Value = serde_json::from_str(&result).unwrap();
         assert_eq!(v["continue"], true);
         assert_eq!(v["permission"], "allow");
-        assert_eq!(v["updated_input"]["command"], "rtk git status");
+        assert_eq!(v["updated_input"]["command"], "contextdroid git status");
     }
 
     #[test]
     fn test_cursor_strips_double_utf8_bom() {
         // Cursor on Windows ships hook stdin with **two** leading
         // UTF-8 BOMs (`EF BB BF EF BB BF`), confirmed via a stdin
-        // tracer wrapping `rtk hook cursor` on Cursor 3.2.x. This is
+        // tracer wrapping `contextdroid hook cursor` on Cursor 3.2.x. This is
         // the real-world payload shape the loop needs to survive.
         let payload = cursor_input("git status");
         let with_double_bom = format!("\u{feff}\u{feff}{}", payload);
@@ -1145,7 +1135,7 @@ mod tests {
         let v: Value = serde_json::from_str(&result).unwrap();
         assert_eq!(v["continue"], true);
         assert_eq!(v["permission"], "allow");
-        assert_eq!(v["updated_input"]["command"], "rtk git status");
+        assert_eq!(v["updated_input"]["command"], "contextdroid git status");
     }
 
     #[test]
@@ -1165,7 +1155,7 @@ mod tests {
 
     #[test]
     fn test_audit_log_silent_when_disabled() {
-        std::env::remove_var("RTK_HOOK_AUDIT");
+        std::env::remove_var("CONTEXTDROID_HOOK_AUDIT");
         audit_log("test", "git status", "rtk git status");
     }
 
@@ -1247,15 +1237,15 @@ mod tests {
     #[test]
     fn test_gemini_deny_blocks_rewrite() {
         use super::permissions::check_command_with_rules;
-        let deny = vec!["cargo test".to_string()];
+        let deny = vec!["git status".to_string()];
         assert_eq!(
-            check_command_with_rules("cargo test", &deny, &[], &[]),
+            check_command_with_rules("git status", &deny, &[], &[]),
             PermissionVerdict::Deny
         );
         // Denied commands must not be rewritten — Gemini handler checks deny before rewrite
         assert!(
-            get_rewritten("cargo test").is_some(),
-            "cargo test should be rewritable when not denied"
+            get_rewritten("git status").is_some(),
+            "git status should be rewritable when not denied"
         );
     }
 
@@ -1330,10 +1320,10 @@ mod tests {
     }
 
     #[test]
-    fn test_decide_allow_for_fd_dup_redirect() {
+    fn test_decide_defer_for_fd_dup_redirect() {
         assert!(matches!(
             decide_with_rules("git status 2>&1", &[], &[], &all_allowed()),
-            HookDecision::AllowRewrite(_)
+            HookDecision::Defer
         ));
     }
 
@@ -1357,7 +1347,7 @@ mod tests {
         assert_eq!(v["decision"], "allow");
         assert_eq!(
             v["hookSpecificOutput"]["tool_input"]["command"],
-            "rtk git status"
+            "contextdroid git status"
         );
     }
 

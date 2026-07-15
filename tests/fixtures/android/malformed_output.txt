@@ -1,0 +1,1 @@
+\x00 synthetic malformed line without a recognized diagnostic structure

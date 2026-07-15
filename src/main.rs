@@ -1,10 +1,14 @@
 mod analytics;
 mod cmds;
-mod core;
+pub mod core;
+pub mod diagnostics;
 mod discover;
 mod hooks;
+pub mod integrations;
 mod learn;
+mod migration;
 mod parser;
+pub mod product;
 
 // Re-export command modules for routing
 use cmds::cloud::{aws_cmd, container, curl_cmd, psql_cmd, wget_cmd};
@@ -51,12 +55,27 @@ pub enum AgentTarget {
     Hermes,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, ValueEnum)]
+enum IntegrationAgent {
+    Claude,
+    Cursor,
+    Codex,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, ValueEnum)]
+enum IntegrationAction {
+    Preview,
+    Install,
+    Status,
+    Uninstall,
+}
+
 #[derive(Parser)]
 #[command(
-    name = "rtk",
+    name = product::BINARY_NAME,
     version,
-    about = "Rust Token Killer - Minimize LLM token consumption",
-    long_about = "A high-performance CLI proxy designed to filter and summarize system outputs before they reach your LLM context."
+    about = "Android-aware command output reduction with raw recovery",
+    long_about = "ContextDroid conservatively extracts Android diagnostics while preserving complete raw command output for recovery."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -73,6 +92,10 @@ struct Cli {
     /// Set SKIP_ENV_VALIDATION=1 for child processes (Next.js, tsc, lint, prisma)
     #[arg(long = "skip-env", global = true)]
     skip_env: bool,
+
+    /// Automatic rewrite profile used by hook/check operations
+    #[arg(long, global = true, value_enum, default_value = "contextdroid-safe")]
+    profile: discover::registry::RewriteProfile,
 }
 
 #[derive(Debug, Subcommand)]
@@ -329,7 +352,7 @@ enum Commands {
         extra_args: Vec<String>,
     },
 
-    /// Initialize rtk instructions for assistant CLI usage
+    /// Disabled legacy setup; use `integrations` for verified lifecycle management
     Init {
         /// Add to global assistant config directory instead of local project file
         #[arg(short, long)]
@@ -404,9 +427,18 @@ enum Commands {
 
     /// Show token savings summary and history
     Gain {
-        /// Filter statistics to current project (current working directory) // added
-        #[arg(short, long)]
-        project: bool,
+        /// Filter by project path; omit the value to use the current directory
+        #[arg(short, long, num_args = 0..=1, default_missing_value = ".")]
+        project: Option<String>,
+        /// Filter by scope, for example android
+        #[arg(long)]
+        scope: Option<String>,
+        /// Filter by command family, for example gradle
+        #[arg(long = "command")]
+        command_family: Option<String>,
+        /// Limit to recent days, for example 7d
+        #[arg(long)]
+        since: Option<String>,
         /// Show ASCII graph of daily savings
         #[arg(short, long)]
         graph: bool,
@@ -445,7 +477,7 @@ enum Commands {
         yes: bool,
     },
 
-    /// Claude Code economics: spending (ccusage) vs savings (rtk) analysis
+    /// Inherited Claude Code economics view using local ContextDroid estimates
     CcEconomics {
         /// Show detailed daily breakdown
         #[arg(short, long)]
@@ -560,7 +592,7 @@ enum Commands {
         args: Vec<String>,
     },
 
-    /// Discover missed RTK savings from Claude Code history
+    /// Discover missed ContextDroid optimization opportunities
     Discover {
         /// Filter by project path (substring match)
         #[arg(short, long)]
@@ -579,13 +611,73 @@ enum Commands {
         format: String,
     },
 
-    /// Show RTK adoption across Claude Code sessions
+    /// Show ContextDroid adoption across Claude Code sessions
     Session {},
 
-    /// Manage telemetry consent and data (RGPD/GDPR)
-    Telemetry {
+    /// Recover stored output and diagnostics for an optimized run
+    Show {
+        /// ContextDroid run identifier
+        run_id: String,
+        /// Show only error diagnostics
+        #[arg(long, conflicts_with_all = ["warnings", "causes", "json", "raw"])]
+        errors: bool,
+        /// Show only warning diagnostics
+        #[arg(long, conflicts_with_all = ["errors", "causes", "json", "raw"])]
+        warnings: bool,
+        /// Show preserved cause messages
+        #[arg(long, conflicts_with_all = ["errors", "warnings", "json", "raw"])]
+        causes: bool,
+        /// Show the structured diagnostics artifact
+        #[arg(long, conflicts_with_all = ["errors", "warnings", "causes", "raw"])]
+        json: bool,
+        /// Show untouched stdout and stderr
+        #[arg(long, conflicts_with_all = ["errors", "warnings", "causes", "json"])]
+        raw: bool,
+    },
+
+    /// Report local correctness and fallback proxies for optimized runs
+    Quality {
+        /// Filter by project path; omit the value to use the current directory
+        #[arg(short, long, num_args = 0..=1, default_missing_value = ".")]
+        project: Option<String>,
+        /// Filter by scope, for example android
+        #[arg(long)]
+        scope: Option<String>,
+        /// Filter by command family, for example gradle
+        #[arg(long = "command")]
+        command_family: Option<String>,
+        /// Limit to recent days, for example 7d
+        #[arg(long)]
+        since: Option<String>,
+        /// Output format: text or json
+        #[arg(short, long, default_value = "text")]
+        format: String,
+    },
+
+    /// Manage durable raw run storage
+    Runs {
         #[command(subcommand)]
-        command: core::telemetry_cmd::TelemetrySubcommand,
+        command: RunsCommands,
+    },
+
+    /// Preview, install, inspect, or uninstall an agent integration
+    Integrations {
+        #[arg(value_enum)]
+        agent: IntegrationAgent,
+        #[arg(value_enum)]
+        action: IntegrationAction,
+        /// Override the integration root
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Cursor hooks schema version; only verified version 1 is accepted
+        #[arg(long)]
+        cursor_schema_version: Option<u32>,
+    },
+
+    /// Explicit migration from an RTK installation
+    Migrate {
+        #[command(subcommand)]
+        command: ProductMigrationCommands,
     },
 
     /// Learn CLI corrections from Claude Code error history
@@ -738,6 +830,32 @@ enum Commands {
         args: Vec<String>,
     },
 
+    /// Android Debug Bridge with conservative semantic output
+    Adb {
+        /// Arguments passed to adb
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
+    /// Android Logcat incident extraction with raw recovery
+    Logcat {
+        /// Incident family to retain
+        #[arg(long, value_enum, default_value = "all")]
+        mode: cmds::android::logcat::LogcatMode,
+        /// Require the incident to reference this package
+        #[arg(long)]
+        package: Option<String>,
+        /// Ask adb to filter to this PID
+        #[arg(long)]
+        pid: Option<u32>,
+        /// Pass a start time to `adb logcat -T`
+        #[arg(long)]
+        since: Option<String>,
+        /// Remaining raw adb logcat arguments
+        #[arg(last = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
     /// Apache Maven wrapper with compact output (test, integration-test, compile, package, install, verify, deploy)
     #[command(name = "mvn")]
     Mvn {
@@ -746,7 +864,7 @@ enum Commands {
         args: Vec<String>,
     },
 
-    /// Show hook rewrite audit metrics (requires RTK_HOOK_AUDIT=1)
+    /// Show hook rewrite audit metrics (requires CONTEXTDROID_HOOK_AUDIT=1)
     #[command(name = "hook-audit")]
     HookAudit {
         /// Show entries from last N days (0 = all time)
@@ -754,16 +872,16 @@ enum Commands {
         since: u64,
     },
 
-    /// Rewrite a raw command to its RTK equivalent (single source of truth for hooks)
+    /// Rewrite a raw command to its profile-approved ContextDroid equivalent
     ///
     /// Exits 0 and prints the rewritten command if supported.
-    /// Exits 1 with no output if the command has no RTK equivalent.
+    /// Exits 1 with no output if the command has no approved equivalent.
     ///
     /// Used by Claude Code, Gemini CLI, and other LLM hooks:
-    ///   REWRITTEN=$(rtk rewrite "$CMD") || exit 0
+    ///   REWRITTEN=$(contextdroid rewrite "$CMD") || exit 0
     Rewrite {
         /// Raw command to rewrite (e.g. "git status", "cargo test && git push")
-        /// Accepts multiple args: `rtk rewrite ls -al` is equivalent to `rtk rewrite "ls -al"`
+        /// Accepts multiple args: `contextdroid rewrite ls -al` equals the quoted form
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -793,6 +911,41 @@ enum HookCommands {
         /// Command to check
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum RunsCommands {
+    /// Delete runs outside configured retention bounds
+    Prune {
+        /// Maximum run age in days
+        #[arg(long, default_value = "7")]
+        days: u64,
+        /// Maximum retained run count
+        #[arg(long, default_value = "200")]
+        max_runs: usize,
+        /// Maximum retained bytes across all runs
+        #[arg(long, default_value = "1073741824")]
+        max_bytes: u64,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ProductMigrationCommands {
+    /// Migrate safe preferences and archive compatible local RTK analytics
+    Rtk {
+        /// RTK data directory containing config.toml and tracking.db
+        #[arg(long)]
+        source_dir: Option<PathBuf>,
+        /// ContextDroid data directory
+        #[arg(long)]
+        destination_dir: Option<PathBuf>,
+        /// Show what would change without writing
+        #[arg(long, conflicts_with = "apply")]
+        dry_run: bool,
+        /// Apply the migration
+        #[arg(long, conflicts_with = "dry_run")]
+        apply: bool,
     },
 }
 
@@ -1173,6 +1326,7 @@ enum GoCommands {
 /// When adding a new RTK-only subcommand to `Commands`, add its clap name here.
 const RTK_META_COMMANDS: &[&str] = &[
     "gain",
+    "quality",
     "discover",
     "learn",
     "init",
@@ -1187,11 +1341,16 @@ const RTK_META_COMMANDS: &[&str] = &[
     "trust",
     "untrust",
     "session",
+    "show",
+    "runs",
+    "integrations",
+    "migrate",
     "rewrite",
-    "telemetry",
     "smart",
     "deps",
     "json",
+    "adb",
+    "logcat",
 ];
 
 fn run_fallback(parse_error: clap::Error) -> Result<i32> {
@@ -1214,7 +1373,7 @@ fn run_fallback(parse_error: clap::Error) -> Result<i32> {
     // Start timer before execution to capture actual command runtime
     let timer = core::tracking::TimedExecution::start();
 
-    // TOML filter lookup — bypass with RTK_NO_TOML=1
+    // TOML filter lookup — bypass with CONTEXTDROID_NO_TOML=1
     // Use basename of args[0] so absolute paths (/usr/bin/make) still match "^make\b".
     let lookup_cmd = {
         let base = std::path::Path::new(&args[0])
@@ -1226,7 +1385,7 @@ fn run_fallback(parse_error: clap::Error) -> Result<i32> {
             .collect::<Vec<_>>()
             .join(" ")
     };
-    let toml_match = if std::env::var("RTK_NO_TOML").ok().as_deref() == Some("1") {
+    let toml_match = if std::env::var("CONTEXTDROID_NO_TOML").ok().as_deref() == Some("1") {
         None
     } else {
         core::toml_filter::find_matching_filter(&lookup_cmd)
@@ -1277,7 +1436,7 @@ fn run_fallback(parse_error: clap::Error) -> Result<i32> {
 
                 timer.track(
                     &raw_command,
-                    &format!("rtk:toml {}", raw_command),
+                    &format!("contextdroid:toml {}", raw_command),
                     &combined_raw,
                     &shown,
                 );
@@ -1288,7 +1447,7 @@ fn run_fallback(parse_error: clap::Error) -> Result<i32> {
             Err(e) => {
                 // Command not found — same behaviour as no-TOML path
                 core::tracking::record_parse_failure_silent(&raw_command, &error_message, false);
-                eprintln!("[rtk: {}]", e);
+                eprintln!("[contextdroid: {}]", e);
                 Ok(127)
             }
         }
@@ -1303,7 +1462,10 @@ fn run_fallback(parse_error: clap::Error) -> Result<i32> {
 
         match status {
             Ok(s) => {
-                timer.track_passthrough(&raw_command, &format!("rtk fallback: {}", raw_command));
+                timer.track_passthrough(
+                    &raw_command,
+                    &format!("contextdroid fallback: {}", raw_command),
+                );
 
                 core::tracking::record_parse_failure_silent(&raw_command, &error_message, true);
 
@@ -1312,7 +1474,7 @@ fn run_fallback(parse_error: clap::Error) -> Result<i32> {
             Err(e) => {
                 core::tracking::record_parse_failure_silent(&raw_command, &error_message, false);
                 // Command not found or other OS error — single message, no duplicate Clap error
-                eprintln!("[rtk: {}]", e);
+                eprintln!("[contextdroid: {}]", e);
                 Ok(127)
             }
         }
@@ -1412,7 +1574,7 @@ fn validate_pnpm_filters(filters: &[String], command: &PnpmCommands) -> Option<S
                     _ => unreachable!(),
                 };
                 let msg = format!(
-                    "[rtk] warning: --filter is not yet supported for pnpm {}, filters preceding the subcommand will be ignored",
+                    "[contextdroid] warning: --filter is not yet supported for pnpm {}, filters preceding the subcommand will be ignored",
                     cmd_name
                 );
                 return Some(msg);
@@ -1438,13 +1600,14 @@ fn main() {
     let code = match run_cli() {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("rtk: {:#}", e);
+            eprintln!("contextdroid: {:#}", e);
             1
         }
     };
     std::process::exit(code);
 }
 
+#[cfg(test)]
 fn uninstall_init_dispatch<UninstallHermes, UninstallStandard>(
     agent: Option<AgentTarget>,
     global: bool,
@@ -1468,9 +1631,6 @@ where
 }
 
 fn run_cli() -> Result<i32> {
-    // Fire-and-forget telemetry ping (1/day, non-blocking)
-    core::telemetry::maybe_ping();
-
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(e) => {
@@ -1494,6 +1654,7 @@ fn run_cli() -> Result<i32> {
         hooks::integrity::runtime_check()?;
     }
 
+    let profile = cli.profile;
     let code = match cli.command {
         Commands::Ls { args } => ls::run(&args, cli.verbose)?,
 
@@ -1512,7 +1673,7 @@ fn run_cli() -> Result<i32> {
             for file in &files {
                 let result = if file == Path::new("-") {
                     if stdin_seen {
-                        eprintln!("rtk: warning: stdin specified more than once");
+                        eprintln!("contextdroid: warning: stdin specified more than once");
                         continue;
                     }
                     stdin_seen = true;
@@ -1878,104 +2039,9 @@ fn run_cli() -> Result<i32> {
             search::run(search::Engine::Rg, 80, 200, false, &extra_args, cli.verbose)?
         }
 
-        Commands::Init {
-            global,
-            opencode,
-            gemini,
-            agent,
-            show,
-            claude_md,
-            hook_only,
-            auto_patch,
-            no_patch,
-            uninstall,
-            codex,
-            copilot,
-            dry_run,
-        } => {
-            let ctx = hooks::init::InitContext {
-                verbose: cli.verbose,
-                dry_run,
-            };
-            if show {
-                hooks::init::show_config(codex)?;
-            } else if uninstall && copilot {
-                if global {
-                    hooks::init::uninstall_copilot_global(ctx)?;
-                } else {
-                    hooks::init::uninstall_copilot(ctx)?;
-                }
-            } else if uninstall {
-                uninstall_init_dispatch(
-                    agent,
-                    global,
-                    gemini,
-                    codex,
-                    ctx,
-                    hooks::init::uninstall_hermes,
-                    hooks::init::uninstall,
-                )?;
-            } else if gemini {
-                let patch_mode = if auto_patch {
-                    hooks::init::PatchMode::Auto
-                } else if no_patch {
-                    hooks::init::PatchMode::Skip
-                } else {
-                    hooks::init::PatchMode::Ask
-                };
-                hooks::init::run_gemini(global, hook_only, patch_mode, ctx)?;
-            } else if copilot {
-                if global {
-                    hooks::init::run_copilot_global(ctx)?;
-                } else {
-                    hooks::init::run_copilot(ctx)?;
-                }
-            } else if agent == Some(AgentTarget::Pi) {
-                hooks::init::run_pi_mode(global, ctx)?
-            } else if agent == Some(AgentTarget::Kilocode) {
-                if global {
-                    anyhow::bail!("Kilo Code is project-scoped. Use: rtk init --agent kilocode");
-                }
-                hooks::init::run_kilocode_mode(ctx)?;
-            } else if agent == Some(AgentTarget::Antigravity) {
-                if global {
-                    anyhow::bail!(
-                        "Antigravity is project-scoped. Use: rtk init --agent antigravity"
-                    );
-                }
-                hooks::init::run_antigravity_mode(ctx)?;
-            } else if agent == Some(AgentTarget::Hermes) {
-                hooks::init::run_hermes_mode(ctx)?;
-            } else {
-                let install_opencode = opencode;
-                let install_claude = !opencode;
-                let install_cursor = agent == Some(AgentTarget::Cursor);
-                let install_windsurf = agent == Some(AgentTarget::Windsurf);
-                let install_cline = agent == Some(AgentTarget::Cline);
-
-                let patch_mode = if auto_patch {
-                    hooks::init::PatchMode::Auto
-                } else if no_patch {
-                    hooks::init::PatchMode::Skip
-                } else {
-                    hooks::init::PatchMode::Ask
-                };
-                hooks::init::run(
-                    global,
-                    install_claude,
-                    install_opencode,
-                    install_cursor,
-                    install_windsurf,
-                    install_cline,
-                    claude_md,
-                    hook_only,
-                    codex,
-                    patch_mode,
-                    ctx,
-                )?;
-            }
-            0
-        }
+        Commands::Init { .. } => anyhow::bail!(
+            "legacy init is disabled in ContextDroid alpha; use `contextdroid integrations <claude|cursor|codex> <preview|install|status|uninstall>`"
+        ),
 
         Commands::Wget { url, output, args } => {
             if output.as_deref() == Some("-") {
@@ -1996,6 +2062,9 @@ fn run_cli() -> Result<i32> {
 
         Commands::Gain {
             project, // added
+            scope,
+            command_family,
+            since,
             graph,
             history,
             quota,
@@ -2009,22 +2078,39 @@ fn run_cli() -> Result<i32> {
             reset,
             yes,
         } => {
-            analytics::gain::run(
-                project, // added: pass project flag
-                graph,
-                history,
-                quota,
-                &tier,
-                daily,
-                weekly,
-                monthly,
-                all,
-                &format,
-                failures,
-                reset,
-                yes,
-                cli.verbose,
-            )?;
+            let use_legacy_view =
+                quota || weekly || monthly || failures || reset || format == "csv";
+            if use_legacy_view {
+                analytics::gain::run(
+                    project.is_some(),
+                    graph,
+                    history,
+                    quota,
+                    &tier,
+                    daily,
+                    weekly,
+                    monthly,
+                    all,
+                    &format,
+                    failures,
+                    reset,
+                    yes,
+                    cli.verbose,
+                )?;
+            } else {
+                core::run_analytics::run_gain_cli(scope, command_family, project, since, &format)?;
+            }
+            0
+        }
+
+        Commands::Quality {
+            project,
+            scope,
+            command_family,
+            since,
+            format,
+        } => {
+            core::run_analytics::run_quality_cli(scope, command_family, project, since, &format)?;
             0
         }
 
@@ -2139,10 +2225,114 @@ fn run_cli() -> Result<i32> {
             0
         }
 
-        Commands::Telemetry { command } => {
-            core::telemetry_cmd::run(&command)?;
+        Commands::Show {
+            run_id,
+            errors,
+            warnings,
+            causes,
+            json,
+            raw,
+        } => {
+            use std::io::Write;
+            let id = core::run_store::RunId::parse(&run_id)?;
+            let store = core::run_store::RunStore::default_store()?;
+            let view = if errors {
+                core::show::ShowView::Errors
+            } else if warnings {
+                core::show::ShowView::Warnings
+            } else if causes {
+                core::show::ShowView::Causes
+            } else if json {
+                core::show::ShowView::Json
+            } else if raw {
+                core::show::ShowView::Raw
+            } else {
+                core::show::ShowView::Summary
+            };
+            let output = core::show::render_run(&store, &id, view)?;
+            std::io::stdout().write_all(&output)?;
             0
         }
+
+        Commands::Runs { command } => match command {
+            RunsCommands::Prune {
+                days,
+                max_runs,
+                max_bytes,
+            } => {
+                let store = core::run_store::RunStore::default_store()?;
+                let report = store.prune(core::run_store::RetentionPolicy {
+                    max_age_days: days,
+                    max_runs,
+                    max_bytes,
+                })?;
+                println!(
+                    "Removed {} runs ({} bytes); kept {} runs ({} bytes)",
+                    report.removed_runs, report.removed_bytes, report.kept_runs, report.kept_bytes
+                );
+                0
+            }
+        },
+
+        Commands::Integrations {
+            agent,
+            action,
+            root,
+            cursor_schema_version,
+        } => {
+            let agent = match agent {
+                IntegrationAgent::Claude => integrations::Agent::Claude,
+                IntegrationAgent::Cursor => integrations::Agent::Cursor,
+                IntegrationAgent::Codex => integrations::Agent::Codex,
+            };
+            let action = match action {
+                IntegrationAction::Preview => integrations::Action::Preview,
+                IntegrationAction::Install => integrations::Action::Install,
+                IntegrationAction::Status => integrations::Action::Status,
+                IntegrationAction::Uninstall => integrations::Action::Uninstall,
+            };
+            let result = integrations::run(agent, action, root, cursor_schema_version)?;
+            match action {
+                integrations::Action::Preview => println!("{}", result.preview),
+                integrations::Action::Status => println!(
+                    "{}: {}",
+                    result.path.display(),
+                    if result.installed {
+                        "installed"
+                    } else {
+                        "not installed"
+                    }
+                ),
+                integrations::Action::Install | integrations::Action::Uninstall => println!(
+                    "{}: {}",
+                    result.path.display(),
+                    if result.changed {
+                        "updated"
+                    } else {
+                        "already in requested state"
+                    }
+                ),
+            }
+            0
+        }
+
+        Commands::Migrate { command } => match command {
+            ProductMigrationCommands::Rtk {
+                source_dir,
+                destination_dir,
+                dry_run: _,
+                apply,
+            } => {
+                let report = migration::migrate_rtk(&migration::MigrationOptions {
+                    source_dir: source_dir.unwrap_or(migration::default_source_dir()?),
+                    destination_dir: destination_dir
+                        .unwrap_or(migration::default_destination_dir()?),
+                    apply,
+                })?;
+                println!("{}", serde_json::to_string_pretty(&report)?);
+                0
+            }
+        },
 
         Commands::Learn {
             project,
@@ -2257,6 +2447,23 @@ fn run_cli() -> Result<i32> {
 
         Commands::Gradlew { args } => gradlew_cmd::run(&args, cli.verbose)?,
 
+        Commands::Adb { args } => cmds::android::adb::run(&args, cli.verbose)?,
+
+        Commands::Logcat {
+            mode,
+            package,
+            pid,
+            since,
+            args,
+        } => cmds::android::logcat::run(
+            mode,
+            package.as_deref(),
+            pid,
+            since.as_deref(),
+            &args,
+            cli.verbose,
+        )?,
+
         Commands::Mvn { args } => mvn_cmd::run(&args, cli.verbose)?,
 
         Commands::HookAudit { since } => {
@@ -2282,12 +2489,9 @@ fn run_cli() -> Result<i32> {
                 0
             }
             HookCommands::Check { agent: _, command } => {
-                use crate::discover::registry::rewrite_command;
+                use crate::discover::registry::rewrite_command_for_profile;
                 let raw = command.join(" ");
-                let (excluded, transparent_prefixes) = crate::core::config::Config::load()
-                    .map(|c| (c.hooks.exclude_commands, c.hooks.transparent_prefixes))
-                    .unwrap_or_default();
-                match rewrite_command(&raw, &excluded, &transparent_prefixes) {
+                match rewrite_command_for_profile(&raw, profile) {
                     Some(rewritten) => {
                         println!("{}", rewritten);
                         0
@@ -2343,7 +2547,7 @@ fn run_cli() -> Result<i32> {
 
             if args.is_empty() {
                 anyhow::bail!(
-                    "proxy requires a command to execute\nUsage: rtk proxy <command> [args...]"
+                    "proxy requires a command to execute\nUsage: contextdroid proxy <command> [args...]"
                 );
             }
 
@@ -2909,7 +3113,10 @@ mod tests {
         // RTK meta-commands should produce parse errors (not fall through to raw execution).
         // Skip "proxy" because it uses trailing_var_arg (accepts any args by design).
         for cmd in RTK_META_COMMANDS {
-            if matches!(*cmd, "proxy" | "run" | "rewrite" | "session") {
+            if matches!(
+                *cmd,
+                "proxy" | "run" | "rewrite" | "session" | "adb" | "logcat"
+            ) {
                 continue; // these use trailing_var_arg (accept any args by design)
             }
             let result = Cli::try_parse_from(["rtk", cmd, "--nonexistent-flag-xyz"]);
@@ -3338,7 +3545,7 @@ mod tests {
                 let warning = validate_pnpm_filters(&filter, &command).unwrap();
 
                 assert_eq!(filter, vec!["@app1", "@app2"]);
-                assert_eq!(warning, "[rtk] warning: --filter is not yet supported for pnpm tsc, filters preceding the subcommand will be ignored")
+                assert_eq!(warning, "[contextdroid] warning: --filter is not yet supported for pnpm tsc, filters preceding the subcommand will be ignored")
             }
             _ => panic!("Expected Pnpm Build command"),
         }

@@ -1,15 +1,15 @@
 //! Controls which project-local TOML filters are allowed to run.
 //!
-//! `.rtk/filters.toml` is loaded from CWD with highest priority. An attacker
+//! `.contextdroid/filters.toml` is loaded from CWD with highest priority. An attacker
 //! can commit this file to a public repo to control what an LLM sees — hiding
 //! malicious code, suppressing security scanner output, or rewriting command
 //! output entirely via `replace` and `match_output` primitives.
 //!
 //! This module implements a trust-before-load model:
 //! - Untrusted filters are **skipped** (not "loaded with warning")
-//! - `rtk trust` stores the SHA-256 hash after user review
+//! - `contextdroid trust` stores the SHA-256 hash after user review
 //! - Content changes invalidate trust (re-review required)
-//! - `RTK_TRUST_PROJECT_FILTERS=1` overrides for CI pipelines
+//! - `CONTEXTDROID_TRUST_PROJECT_FILTERS=1` overrides for CI pipelines
 
 use super::integrity;
 use crate::core::constants::{RTK_DATA_DIR, TRUSTED_FILTERS_JSON};
@@ -101,7 +101,7 @@ pub fn check_trust(filter_path: &Path) -> Result<TrustStatus> {
 /// Reads the file once, hashes those bytes, and returns the trust status with
 /// the verified content. Content is `Some` only for `Trusted` / `EnvOverride`.
 pub fn check_trust_with_content(filter_path: &Path) -> Result<(TrustStatus, Option<String>)> {
-    if std::env::var("RTK_TRUST_PROJECT_FILTERS").as_deref() == Ok("1") {
+    if std::env::var("CONTEXTDROID_TRUST_PROJECT_FILTERS").as_deref() == Ok("1") {
         let in_ci = std::env::var("CI").is_ok()
             || std::env::var("GITHUB_ACTIONS").is_ok()
             || std::env::var("GITLAB_CI").is_ok()
@@ -113,7 +113,7 @@ pub fn check_trust_with_content(filter_path: &Path) -> Result<(TrustStatus, Opti
             return Ok((TrustStatus::EnvOverride, Some(content)));
         }
         eprintln!(
-            "[rtk] WARNING: RTK_TRUST_PROJECT_FILTERS=1 ignored (CI environment not detected)"
+            "[contextdroid] WARNING: CONTEXTDROID_TRUST_PROJECT_FILTERS=1 ignored (CI environment not detected)"
         );
     }
 
@@ -127,7 +127,7 @@ pub fn check_trust_with_content(filter_path: &Path) -> Result<(TrustStatus, Opti
         Ok(s) => s,
         Err(e) => {
             eprintln!(
-                "[rtk] WARNING: trust store unreadable ({}), treating all filters as untrusted",
+                "[contextdroid] WARNING: trust store unreadable ({}), treating all filters as untrusted",
                 e
             );
             TrustStore::default()
@@ -146,7 +146,7 @@ pub fn check_trust_with_content(filter_path: &Path) -> Result<(TrustStatus, Opti
             Ok(content) => Ok((TrustStatus::Trusted, Some(content))),
             Err(_) => {
                 eprintln!(
-                    "[rtk] WARNING: trusted filter {} is not valid UTF-8 — treating as untrusted",
+                    "[contextdroid] WARNING: trusted filter {} is not valid UTF-8 — treating as untrusted",
                     filter_path.display()
                 );
                 Ok((TrustStatus::Untrusted, None))
@@ -218,16 +218,17 @@ pub fn run_trust(list: bool) -> Result<()> {
         return Ok(());
     }
 
-    let filter_path = Path::new(".rtk/filters.toml");
+    let filter_path = Path::new(".contextdroid/filters.toml");
     if !filter_path.exists() {
-        anyhow::bail!("No .rtk/filters.toml found in current directory");
+        anyhow::bail!("No .contextdroid/filters.toml found in current directory");
     }
 
     // Read ONCE to prevent TOCTOU: display + hash from same buffer
-    let content_bytes = std::fs::read(filter_path).context("Failed to read .rtk/filters.toml")?;
+    let content_bytes =
+        std::fs::read(filter_path).context("Failed to read .contextdroid/filters.toml")?;
     let content = String::from_utf8_lossy(&content_bytes);
 
-    println!("=== .rtk/filters.toml ===");
+    println!("=== .contextdroid/filters.toml ===");
     println!("{}", content);
     println!("=========================");
     println!();
@@ -247,7 +248,7 @@ pub fn run_trust(list: bool) -> Result<()> {
     trust_filter_with_hash(filter_path, &hash)?;
     println!();
     println!(
-        "Trusted .rtk/filters.toml (sha256:{})",
+        "Trusted .contextdroid/filters.toml (sha256:{})",
         hash.get(..16).unwrap_or(&hash)
     );
     println!("Project-local filters will now be applied.");
@@ -257,12 +258,12 @@ pub fn run_trust(list: bool) -> Result<()> {
 
 /// Run `rtk untrust` — revoke trust for project-local filters.
 pub fn run_untrust() -> Result<()> {
-    let filter_path = Path::new(".rtk/filters.toml");
+    let filter_path = Path::new(".contextdroid/filters.toml");
     // If file doesn't exist, untrust by canonical path lookup won't work.
     // Try anyway (file may have been deleted after trust), fallback gracefully.
     let removed = untrust_filter(filter_path).unwrap_or(false);
     if removed {
-        println!("Trust revoked for .rtk/filters.toml");
+        println!("Trust revoked for .contextdroid/filters.toml");
         println!("Project-local filters will no longer be applied.");
     } else {
         println!("No trust entry found for current directory.");
@@ -462,12 +463,12 @@ mod tests {
 
         // Both env vars must be set: trust override + CI indicator
         #[allow(deprecated)]
-        std::env::set_var("RTK_TRUST_PROJECT_FILTERS", "1");
+        std::env::set_var("CONTEXTDROID_TRUST_PROJECT_FILTERS", "1");
         #[allow(deprecated)]
         std::env::set_var("CI", "true");
         let status = check_trust(&filter).unwrap();
         #[allow(deprecated)]
-        std::env::remove_var("RTK_TRUST_PROJECT_FILTERS");
+        std::env::remove_var("CONTEXTDROID_TRUST_PROJECT_FILTERS");
         #[allow(deprecated)]
         std::env::remove_var("CI");
 

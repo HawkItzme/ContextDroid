@@ -1,0 +1,2 @@
+> Task :app:compileDebugJavaWithJavac FAILED
+/workspace/app/src/main/java/com/example/app/Main.java:9: error: cannot find symbol

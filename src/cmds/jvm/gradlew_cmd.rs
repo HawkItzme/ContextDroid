@@ -29,19 +29,33 @@ enum GradlewTask {
 }
 
 fn detect_task(args: &[String]) -> GradlewTask {
-    // Use the last non-flag, non-clean task to determine the filter.
-    // Example: `clean assembleDebug` → Build (last non-clean task).
-    // Note: for mixed-task invocations like `test assemble`, last wins.
-    let task = args
+    let tasks: Vec<GradlewTask> = args
         .iter()
         .filter(|a| !a.starts_with('-') && a.to_lowercase() != "clean")
-        .map(|s| s.to_lowercase())
-        .next_back()
-        .unwrap_or_default();
+        .map(|task| classify_task_name(&task.to_lowercase()))
+        .collect();
 
+    let Some(first) = tasks.first() else {
+        return GradlewTask::Build;
+    };
+    if tasks.iter().all(|task| task == first) {
+        match first {
+            GradlewTask::Build => GradlewTask::Build,
+            GradlewTask::Test => GradlewTask::Test,
+            GradlewTask::ConnectedTest => GradlewTask::ConnectedTest,
+            GradlewTask::Lint => GradlewTask::Lint,
+            GradlewTask::Dependencies => GradlewTask::Dependencies,
+            GradlewTask::Other => GradlewTask::Other,
+        }
+    } else {
+        GradlewTask::Other
+    }
+}
+
+fn classify_task_name(task: &str) -> GradlewTask {
     if task.contains("connected") {
         GradlewTask::ConnectedTest
-    } else if task.contains("test") {
+    } else if task.contains("test") || task == "check" {
         GradlewTask::Test
     } else if task.contains("assemble")
         || task.contains("build")
@@ -51,13 +65,8 @@ fn detect_task(args: &[String]) -> GradlewTask {
         GradlewTask::Build
     } else if task.contains("lint") || task.contains("ktlint") || task.contains("detekt") {
         GradlewTask::Lint
-    } else if task == "check" {
-        GradlewTask::Test
-    } else if task.contains("dependencies") {
+    } else if task.contains("dependencies") || task.contains("dependencyinsight") {
         GradlewTask::Dependencies
-    } else if task.is_empty() {
-        // Only "clean" was passed (filtered out above) → treat as Build to filter task noise
-        GradlewTask::Build
     } else {
         GradlewTask::Other
     }
@@ -100,16 +109,12 @@ fn new_gradle_command(args: &[String]) -> Command {
     cmd
 }
 
-/// `StreamFilter` for build mode: keeps lines for which `filter_build_line` returns true.
+/// Legacy line filter retained only for the explicit `rtk-compatible` profile.
 struct BuildLineFilter;
 
 impl StreamFilter for BuildLineFilter {
     fn feed_line(&mut self, line: &str) -> Option<String> {
-        if filter_build_line(line) {
-            Some(format!("{}\n", line))
-        } else {
-            None
-        }
+        filter_build_line(line).then(|| format!("{}\n", line))
     }
 
     fn flush(&mut self) -> String {
@@ -131,39 +136,75 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
     let args_display = args.join(" ");
     let tool = gradlew_binary();
 
+    if std::env::var("CONTEXTDROID_PROFILE").as_deref() == Ok("rtk-compatible") {
+        return run_legacy(cmd, tool, &args_display, detect_task(args), verbose, args);
+    }
+
     match detect_task(args) {
+        GradlewTask::Other => {
+            let osargs: Vec<OsString> = args.iter().map(OsString::from).collect();
+            runner::run_passthrough(gradlew_binary(), &osargs, verbose)
+        }
+        GradlewTask::Build
+        | GradlewTask::Test
+        | GradlewTask::ConnectedTest
+        | GradlewTask::Lint
+        | GradlewTask::Dependencies => {
+            let command = format!("{} {}", tool, args_display);
+            runner::run_diagnostic(
+                cmd,
+                tool,
+                &args_display,
+                move |raw, exit_code, run_id| {
+                    crate::cmds::android::gradle::parse(&command, raw, exit_code, run_id)
+                },
+                RunOptions::default(),
+            )
+        }
+    }
+}
+
+fn run_legacy(
+    cmd: Command,
+    tool: &str,
+    args_display: &str,
+    task: GradlewTask,
+    verbose: u8,
+    args: &[String],
+) -> Result<i32> {
+    match task {
         GradlewTask::Build => runner::run_streamed(
             cmd,
             tool,
-            &args_display,
+            args_display,
             Box::new(BuildLineFilter),
             RunOptions::with_tee("gradlew_build"),
         ),
         GradlewTask::Test => runner::run_filtered(
             cmd,
             tool,
-            &args_display,
+            args_display,
             filter_test,
             RunOptions::with_tee("gradlew_test"),
         ),
         GradlewTask::ConnectedTest => runner::run_filtered(
             cmd,
             tool,
-            &args_display,
+            args_display,
             filter_connected,
             RunOptions::with_tee("gradlew_connected"),
         ),
         GradlewTask::Lint => runner::run_filtered(
             cmd,
             tool,
-            &args_display,
+            args_display,
             filter_lint,
             RunOptions::with_tee("gradlew_lint"),
         ),
         GradlewTask::Dependencies => runner::run_filtered(
             cmd,
             tool,
-            &args_display,
+            args_display,
             filter_dependencies,
             RunOptions::with_tee("gradlew_deps"),
         ),
@@ -176,7 +217,7 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
 
 // ── Build filter predicate ────────────────────────────────────────────────────
 
-fn filter_build_line(line: &str) -> bool {
+pub fn filter_build_line(line: &str) -> bool {
     lazy_static! {
         static ref DAEMON_LINE: Regex = Regex::new(
             r"^(Starting a Gradle Daemon|Daemon will be stopped|Reusing configuration cache|Calculating task graph|> Configure project|Deprecated Gradle features|You can use|For more on this|Configuration cache entry)"
@@ -227,7 +268,7 @@ fn is_framework_frame(trimmed: &str) -> bool {
         || trimmed.starts_with("at org.gradle.")
 }
 
-fn filter_test(output: &str) -> String {
+pub fn filter_test(output: &str) -> String {
     lazy_static! {
         static ref FAILED_LINE: Regex = Regex::new(r"FAILED$| FAILED ").unwrap();
         static ref PASSED_SKIPPED: Regex = Regex::new(r" PASSED$| SKIPPED$").unwrap();
@@ -303,7 +344,7 @@ fn filter_test(output: &str) -> String {
 
 // ── Connected / instrumented test filter ─────────────────────────────────────
 
-fn filter_connected(output: &str) -> String {
+pub fn filter_connected(output: &str) -> String {
     lazy_static! {
         static ref INSTRUMENTATION_STATUS: Regex =
             Regex::new(r"^INSTRUMENTATION_STATUS[_CODE]*:").unwrap();
@@ -351,7 +392,7 @@ fn filter_connected(output: &str) -> String {
 
 // ── Lint output filter ────────────────────────────────────────────────────────
 
-fn filter_lint(output: &str) -> String {
+pub fn filter_lint(output: &str) -> String {
     lazy_static! {
         // Android lint errors: src/main/java/Foo.kt:45: Error: message [IssueId]
         static ref ANDROID_LINT_ERROR: Regex =
@@ -433,7 +474,7 @@ fn filter_lint(output: &str) -> String {
 
 // ── Dependencies output filter ───────────────────────────────────────────────
 
-fn filter_dependencies(output: &str) -> String {
+pub fn filter_dependencies(output: &str) -> String {
     if output.is_empty() {
         return String::new();
     }
@@ -583,6 +624,13 @@ mod tests {
         // clean assembleDebug → Build (last non-clean task)
         let args = vec!["clean".to_string(), "assembleDebug".to_string()];
         assert_eq!(detect_task(&args), GradlewTask::Build);
+    }
+
+    #[test]
+    fn test_detect_mixed_task_families_is_conservative() {
+        let args = vec!["testDebugUnitTest".to_string(), "assembleDebug".to_string()];
+
+        assert_eq!(detect_task(&args), GradlewTask::Other);
     }
 
     #[test]

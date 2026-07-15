@@ -1,0 +1,3 @@
+> Task :app:testDebugUnitTest FAILED
+com.example.app.WidgetTest > rendersExpectedState FAILED
+expected:<ready> but was:<loading>

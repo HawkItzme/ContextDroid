@@ -2,16 +2,16 @@
 ///
 /// Provides a declarative pipeline of 8 stages that can be configured
 /// via TOML files. Lookup priority (first match wins):
-///   1. `.rtk/filters.toml`              — project-local, committable with the repo
-///   2. `~/.config/rtk/filters.toml`     — user-global, applies to all projects
+///   1. `.contextdroid/filters.toml`              — project-local, committable with the repo
+///   2. platform ContextDroid config directory    — user-global, applies to all projects
 ///   3. Built-in TOML                     — `src/filters/*.toml`, concatenated by build.rs and embedded at compile time
 ///   4. Passthrough                       — no match, handled by caller
 ///
-/// `rtk init` generates a commented template for both levels (project or global).
+/// Legacy setup can generate a commented template for both levels.
 ///
 /// Environment variables:
-///   - `RTK_NO_TOML=1`     — bypass TOML engine entirely
-///   - `RTK_TOML_DEBUG=1`  — print which filter matched and line counts to stderr
+///   - `CONTEXTDROID_NO_TOML=1`     — bypass TOML engine entirely
+///   - `CONTEXTDROID_TOML_DEBUG=1`  — print which filter matched and line counts to stderr
 ///
 /// Pipeline stages (applied in order):
 ///   1. strip_ansi           — remove ANSI escape codes
@@ -188,8 +188,8 @@ impl TomlFilterRegistry {
     fn load() -> Self {
         let mut filters = Vec::new();
 
-        // Priority 1: project-local .rtk/filters.toml (trust-gated)
-        let project_filter_path = std::path::Path::new(".rtk/filters.toml");
+        // Priority 1: project-local .contextdroid/filters.toml (trust-gated)
+        let project_filter_path = std::path::Path::new(".contextdroid/filters.toml");
         if project_filter_path.exists() {
             let (trust_status, verified_content) =
                 crate::hooks::trust::check_trust_with_content(project_filter_path)
@@ -201,17 +201,28 @@ impl TomlFilterRegistry {
                     if let Some(content) = verified_content {
                         match Self::parse_and_compile(&content, "project") {
                             Ok(f) => filters.extend(f),
-                            Err(e) => eprintln!("[rtk] warning: .rtk/filters.toml: {}", e),
+                            Err(e) => eprintln!(
+                                "[contextdroid] warning: .contextdroid/filters.toml: {}",
+                                e
+                            ),
                         }
                     }
                 }
                 crate::hooks::trust::TrustStatus::Untrusted => {
-                    eprintln!("[rtk] WARNING: untrusted project filters (.rtk/filters.toml)");
-                    eprintln!("[rtk] Filters NOT applied. Run `rtk trust` to review and enable.");
+                    eprintln!(
+                        "[contextdroid] WARNING: untrusted project filters (.contextdroid/filters.toml)"
+                    );
+                    eprintln!(
+                        "[contextdroid] Filters NOT applied. Run `contextdroid trust` to review and enable."
+                    );
                 }
                 crate::hooks::trust::TrustStatus::ContentChanged { .. } => {
-                    eprintln!("[rtk] WARNING: .rtk/filters.toml changed since trusted.");
-                    eprintln!("[rtk] Filters NOT applied. Run `rtk trust` to re-review.");
+                    eprintln!(
+                        "[contextdroid] WARNING: .contextdroid/filters.toml changed since trusted."
+                    );
+                    eprintln!(
+                        "[contextdroid] Filters NOT applied. Run `contextdroid trust` to re-review."
+                    );
                 }
             }
         }
@@ -222,7 +233,7 @@ impl TomlFilterRegistry {
             if let Ok(content) = std::fs::read_to_string(&global_path) {
                 match Self::parse_and_compile(&content, "user-global") {
                     Ok(f) => filters.extend(f),
-                    Err(e) => eprintln!("[rtk] warning: {}: {}", global_path.display(), e),
+                    Err(e) => eprintln!("[contextdroid] warning: {}: {}", global_path.display(), e),
                 }
             }
         }
@@ -231,7 +242,7 @@ impl TomlFilterRegistry {
         let builtin = BUILTIN_TOML;
         match Self::parse_and_compile(builtin, "builtin") {
             Ok(f) => filters.extend(f),
-            Err(e) => eprintln!("[rtk] warning: builtin filters: {}", e),
+            Err(e) => eprintln!("[contextdroid] warning: builtin filters: {}", e),
         }
 
         TomlFilterRegistry { filters }
@@ -252,7 +263,10 @@ impl TomlFilterRegistry {
         for (name, def) in file.filters {
             match compile_filter(name.clone(), def) {
                 Ok(f) => compiled.push(f),
-                Err(e) => eprintln!("[rtk] warning: filter '{}' in {}: {}", name, source, e),
+                Err(e) => eprintln!(
+                    "[contextdroid] warning: filter '{}' in {}: {}",
+                    name, source, e
+                ),
             }
         }
         Ok(compiled)
@@ -328,7 +342,7 @@ fn compile_filter(name: String, def: TomlFilterDef) -> Result<CompiledFilter, St
     for cmd in RUST_HANDLED_COMMANDS {
         if match_regex.is_match(cmd) {
             eprintln!(
-                "[rtk] warning: filter '{}' match_command matches '{}' which is already \
+                "[contextdroid] warning: filter '{}' match_command matches '{}' which is already \
                  handled by a Rust module — this filter will never activate for that command",
                 name, cmd
             );
@@ -558,7 +572,7 @@ pub fn run_filter_tests(filter_name_opt: Option<&str>) -> VerifyResults {
     );
 
     // Trust-gated: only verify project-local filters if trusted (SA-2025-RTK-002)
-    let project_path = std::path::Path::new(".rtk/filters.toml");
+    let project_path = std::path::Path::new(".contextdroid/filters.toml");
     if project_path.exists() {
         let (trust_status, verified_content) =
             crate::hooks::trust::check_trust_with_content(project_path)
@@ -577,7 +591,7 @@ pub fn run_filter_tests(filter_name_opt: Option<&str>) -> VerifyResults {
                 }
             }
             _ => {
-                eprintln!("[rtk] WARNING: untrusted project filters skipped in verify");
+                eprintln!("[contextdroid] WARNING: untrusted project filters skipped in verify");
             }
         }
     }
@@ -607,7 +621,10 @@ fn collect_test_outcomes(
     let file: TomlFilterFile = match toml::from_str(content) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("[rtk] warning: TOML parse error during verify: {}", e);
+            eprintln!(
+                "[contextdroid] warning: TOML parse error during verify: {}",
+                e
+            );
             return;
         }
     };
@@ -620,7 +637,10 @@ fn collect_test_outcomes(
             Ok(f) => {
                 compiled_filters.insert(name, f);
             }
-            Err(e) => eprintln!("[rtk] warning: filter '{}' compilation error: {}", name, e),
+            Err(e) => eprintln!(
+                "[contextdroid] warning: filter '{}' compilation error: {}",
+                name, e
+            ),
         }
     }
 
@@ -638,7 +658,7 @@ fn collect_test_outcomes(
             Some(f) => f,
             None => {
                 eprintln!(
-                    "[rtk] warning: [[tests.{}]] references unknown filter",
+                    "[contextdroid] warning: [[tests.{}]] references unknown filter",
                     filter_name
                 );
                 continue;

@@ -1,0 +1,1 @@
+07-15 10:11:12.123  4242  4242 E StrictMode: StrictMode policy violation: android.os.strictmode.DiskReadViolation

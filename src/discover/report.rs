@@ -198,22 +198,22 @@ pub fn format_text(report: &DiscoverReport, limit: usize, verbose: bool) -> Stri
 
         out.push_str(&"-".repeat(52));
         out.push('\n');
-        out.push_str("-> github.com/rtk-ai/rtk/issues\n");
+        out.push_str("-> github.com/HawkItzme/ContextDroid/issues\n");
     }
 
     // RTK_DISABLED bypass warning
     if report.rtk_disabled_count > 0 {
         out.push_str(&format!(
-            "\nRTK_DISABLED BYPASS -- {} commands ran without filtering\n",
+            "\nCONTEXTDROID DISABLE OVERRIDE -- {} commands ran without filtering\n",
             report.rtk_disabled_count
         ));
         out.push_str(&"-".repeat(72));
         out.push('\n');
-        out.push_str("These commands used RTK_DISABLED=1 unnecessarily:\n");
+        out.push_str("These commands used a disable override unnecessarily:\n");
         if !report.rtk_disabled_examples.is_empty() {
             out.push_str(&format!("  {}\n", report.rtk_disabled_examples.join(", ")));
         }
-        out.push_str("-> Remove RTK_DISABLED=1 to recover token savings\n");
+        out.push_str("-> Remove CONTEXTDROID_DISABLED=1 to restore optimization\n");
     }
 
     out.push_str("\n~estimated from tool_result output sizes\n");
@@ -229,15 +229,15 @@ pub fn format_text(report: &DiscoverReport, limit: usize, verbose: bool) -> Stri
 
 fn append_agent_notes(out: &mut String, status: AgentIntegrationStatus) {
     if status.cursor_hook_installed {
-        out.push_str("\nNote: Cursor sessions are tracked via `rtk gain` (discover scans Claude Code only)\n");
+        out.push_str("\nNote: Cursor sessions are tracked via `contextdroid gain` (discover scans Claude Code only)\n");
     }
 
     if status.hermes_plugin_installed {
-        out.push_str("\nNote: Hermes plugin is installed; Hermes sessions are tracked via `rtk gain` (discover scans Claude Code only)\n");
+        out.push_str("\nNote: Hermes plugin is installed; Hermes sessions are tracked via `contextdroid gain` (discover scans Claude Code only)\n");
     }
 
     if status.copilot_hook_installed {
-        out.push_str("\nNote: GitHub Copilot sessions are tracked via `rtk gain` (discover scans Claude Code only)\n");
+        out.push_str("\nNote: GitHub Copilot sessions are tracked via `contextdroid gain` (discover scans Claude Code only)\n");
     }
 }
 
@@ -421,7 +421,7 @@ mod tests {
         let output = format_text(&report, 10, false);
 
         assert!(
-            output.contains("GitHub Copilot sessions are tracked via `rtk gain`"),
+            output.contains("GitHub Copilot sessions are tracked via `contextdroid gain`"),
             "Expected Copilot note in output but got:\n{}",
             output
         );

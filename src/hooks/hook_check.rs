@@ -96,9 +96,11 @@ fn check_and_warn() -> Option<()> {
     let warning = match status() {
         HookStatus::Ok => return Some(()),
         HookStatus::Missing => {
-            "[rtk] /!\\ No hook installed — run `rtk init -g` for automatic token savings"
+            "[contextdroid] /!\\ No hook installed — use `contextdroid integrations claude install`"
         }
-        HookStatus::Outdated => "[rtk] /!\\ Hook outdated — run `rtk init -g` to update",
+        HookStatus::Outdated => {
+            "[contextdroid] /!\\ Hook outdated — use `contextdroid integrations claude install`"
+        }
     };
 
     // Rate limit: warn once per day

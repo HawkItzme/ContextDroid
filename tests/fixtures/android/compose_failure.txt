@@ -1,0 +1,2 @@
+> Task :app:compileDebugKotlin FAILED
+Compose Compiler: @Composable invocations can only happen from a @Composable context

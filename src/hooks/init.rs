@@ -31,37 +31,6 @@ const PI_PLUGIN: &str = include_str!("../../hooks/pi/rtk.ts");
 const RTK_SLIM: &str = include_str!("../../hooks/claude/rtk-awareness.md");
 const RTK_SLIM_CODEX: &str = include_str!("../../hooks/codex/rtk-awareness.md");
 
-/// Template written by `rtk init` when no filters.toml exists yet.
-const FILTERS_TEMPLATE: &str = r#"# Project-local RTK filters — commit this file with your repo.
-# Filters here override user-global and built-in filters.
-# Docs: https://github.com/rtk-ai/rtk#custom-filters
-schema_version = 1
-
-# Example: suppress build noise from a custom tool
-# [filters.my-tool]
-# description = "Compact my-tool output"
-# match_command = "^my-tool\\s+build"
-# strip_ansi = true
-# strip_lines_matching = ["^\\s*$", "^Downloading", "^Installing"]
-# max_lines = 30
-# on_empty = "my-tool: ok"
-"#;
-
-/// Template for user-global filters (~/.config/rtk/filters.toml).
-const FILTERS_GLOBAL_TEMPLATE: &str = r#"# User-global RTK filters — apply to all your projects.
-# Project-local .rtk/filters.toml takes precedence over these.
-# Docs: https://github.com/rtk-ai/rtk#custom-filters
-schema_version = 1
-
-# Example: suppress noise from a tool you use everywhere
-# [filters.my-global-tool]
-# description = "Compact my-global-tool output"
-# match_command = "^my-global-tool\\b"
-# strip_ansi = true
-# strip_lines_matching = ["^\\s*$"]
-# max_lines = 40
-"#;
-
 const RTK_MD: &str = "RTK.md";
 const CLAUDE_MD: &str = "CLAUDE.md";
 const AGENTS_MD: &str = "AGENTS.md";
@@ -325,10 +294,6 @@ pub fn run(
         }
     }
 
-    if !dry_run {
-        prompt_telemetry_consent()?;
-    }
-
     if dry_run {
         print_dry_run_footer();
     } else {
@@ -444,66 +409,6 @@ fn prompt_user_consent(settings_path: &Path) -> Result<bool> {
 
     let response = line.trim().to_lowercase();
     Ok(response == "y" || response == "yes")
-}
-
-pub fn save_telemetry_consent(accepted: bool) -> Result<()> {
-    let mut config = crate::core::config::Config::load().unwrap_or_default();
-    config.telemetry.consent_given = Some(accepted);
-    config.telemetry.enabled = accepted;
-    config.telemetry.consent_date = Some(chrono::Utc::now().to_rfc3339());
-    config
-        .save()
-        .context("Failed to save telemetry consent to config.toml")
-}
-
-fn prompt_telemetry_consent() -> Result<()> {
-    use std::io::{self, BufRead, IsTerminal};
-
-    let config = crate::core::config::Config::load().unwrap_or_default();
-    match config.telemetry.consent_given {
-        Some(true) => return Ok(()),
-        Some(false) => return Ok(()),
-        None => {}
-    }
-
-    if !io::stdin().is_terminal() {
-        return Ok(());
-    }
-
-    eprintln!();
-    eprintln!("--- Telemetry ---");
-    eprintln!("RTK collects anonymous usage metrics once per day to improve filters.");
-    eprintln!();
-    eprintln!("  What:    command names (not arguments), token savings, OS, version");
-    eprintln!("  Why:     prioritize filter development for the most-used commands");
-    eprintln!("  Who:     RTK AI Labs, contact@rtk-ai.app");
-    eprintln!("  Rights:  disable anytime with `rtk telemetry disable`,");
-    eprintln!("           request erasure with `rtk telemetry forget`");
-    eprintln!("  Details: https://github.com/rtk-ai/rtk/blob/master/docs/TELEMETRY.md");
-    eprintln!();
-    eprint!("Enable anonymous telemetry? [y/N] ");
-
-    let stdin = io::stdin();
-    let mut line = String::new();
-    stdin
-        .lock()
-        .read_line(&mut line)
-        .context("Failed to read user input")?;
-
-    let accepted = {
-        let response = line.trim().to_lowercase();
-        response == "y" || response == "yes"
-    };
-
-    save_telemetry_consent(accepted)?;
-
-    if accepted {
-        eprintln!("  Telemetry enabled. Disable anytime: rtk telemetry disable");
-    } else {
-        eprintln!("  Telemetry disabled.");
-    }
-
-    Ok(())
 }
 
 fn print_manual_instructions(hook_command: &str, include_opencode: bool) {
@@ -1127,7 +1032,6 @@ fn run_default_mode(
     if !global {
         // Local init: inject CLAUDE.md + generate project-local filters template
         run_claude_md_mode(false, install_opencode, ctx)?;
-        generate_project_filters_template(ctx)?;
         return Ok(());
     }
 
@@ -1196,7 +1100,6 @@ fn run_default_mode(
     }
 
     // 6. Generate user-global filters template (~/.config/rtk/filters.toml)
-    generate_global_filters_template(ctx)?;
 
     if !dry_run {
         println!(); // Final newline
@@ -1346,73 +1249,6 @@ fn remove_legacy_hook_entries_from_json(root: &mut serde_json::Value) -> bool {
     });
 
     pre_tool_use_array.len() < original_len
-}
-
-/// Generate .rtk/filters.toml template in the current directory if not present.
-fn generate_project_filters_template(ctx: InitContext) -> Result<()> {
-    let InitContext { verbose, dry_run } = ctx;
-    let rtk_dir = std::path::Path::new(".rtk");
-    let path = rtk_dir.join("filters.toml");
-
-    if path.exists() {
-        if verbose > 0 {
-            eprintln!(".rtk/filters.toml already exists, skipping template");
-        }
-        return Ok(());
-    }
-
-    if dry_run {
-        println!(
-            "[dry-run] would create .rtk/filters.toml template: {}",
-            path.display()
-        );
-        return Ok(());
-    }
-
-    fs::create_dir_all(rtk_dir)
-        .with_context(|| format!("Failed to create directory: {}", rtk_dir.display()))?;
-    fs::write(&path, FILTERS_TEMPLATE)
-        .with_context(|| format!("Failed to write {}", path.display()))?;
-
-    println!(
-        "  filters:   {} (template, edit to add project filters)",
-        path.display()
-    );
-    Ok(())
-}
-
-/// Generate ~/.config/rtk/filters.toml template if not present.
-fn generate_global_filters_template(ctx: InitContext) -> Result<()> {
-    let InitContext { verbose, dry_run } = ctx;
-    let config_dir = dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from(".config"));
-    let rtk_dir = config_dir.join(crate::core::constants::RTK_DATA_DIR);
-    let path = rtk_dir.join("filters.toml");
-
-    if path.exists() {
-        if verbose > 0 {
-            eprintln!("{} already exists, skipping template", path.display());
-        }
-        return Ok(());
-    }
-
-    if dry_run {
-        println!(
-            "[dry-run] would create global filters template: {}",
-            path.display()
-        );
-        return Ok(());
-    }
-
-    fs::create_dir_all(&rtk_dir)
-        .with_context(|| format!("Failed to create directory: {}", rtk_dir.display()))?;
-    fs::write(&path, FILTERS_GLOBAL_TEMPLATE)
-        .with_context(|| format!("Failed to write {}", path.display()))?;
-
-    println!(
-        "  filters:   {} (template, edit to add user-global filters)",
-        path.display()
-    );
-    Ok(())
 }
 
 /// Hook-only mode: just the hook, no RTK.md
@@ -3600,7 +3436,7 @@ fn run_opencode_only_mode(ctx: InitContext) -> Result<()> {
 
 /// Gemini hook wrapper script — delegates to `rtk hook gemini`
 const GEMINI_HOOK_SCRIPT: &str = r#"#!/bin/bash
-exec rtk hook gemini
+exec contextdroid hook gemini
 "#;
 
 fn resolve_gemini_dir() -> Result<PathBuf> {
@@ -3876,7 +3712,7 @@ const COPILOT_HOOK_JSON: &str = r#"{
     "PreToolUse": [
       {
         "type": "command",
-        "command": "rtk hook copilot",
+        "command": "contextdroid hook copilot",
         "cwd": ".",
         "timeout": 5
       }
@@ -3884,8 +3720,8 @@ const COPILOT_HOOK_JSON: &str = r#"{
     "preToolUse": [
       {
         "type": "command",
-        "bash": "rtk hook copilot",
-        "powershell": "rtk hook copilot",
+        "bash": "contextdroid hook copilot",
+        "powershell": "contextdroid hook copilot",
         "cwd": ".",
         "timeoutSec": 5
       }
@@ -6580,13 +6416,13 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(COPILOT_HOOK_JSON).unwrap();
 
         let vscode = &v["hooks"]["PreToolUse"][0];
-        assert_eq!(vscode["command"], "rtk hook copilot");
+        assert_eq!(vscode["command"], "contextdroid hook copilot");
         assert!(vscode["timeout"].is_number(), "VS Code uses `timeout`");
 
         assert_eq!(v["version"], 1, "Copilot CLI requires top-level version");
         let cli = &v["hooks"]["preToolUse"][0];
-        assert_eq!(cli["bash"], "rtk hook copilot");
-        assert_eq!(cli["powershell"], "rtk hook copilot");
+        assert_eq!(cli["bash"], "contextdroid hook copilot");
+        assert_eq!(cli["powershell"], "contextdroid hook copilot");
         assert!(
             cli["timeoutSec"].is_number(),
             "Copilot CLI uses `timeoutSec`"
@@ -6606,9 +6442,15 @@ mod tests {
         let v: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&hook_path).unwrap()).unwrap();
 
-        assert_eq!(v["hooks"]["PreToolUse"][0]["command"], "rtk hook copilot");
+        assert_eq!(
+            v["hooks"]["PreToolUse"][0]["command"],
+            "contextdroid hook copilot"
+        );
         assert_eq!(v["version"], 1);
-        assert_eq!(v["hooks"]["preToolUse"][0]["bash"], "rtk hook copilot");
+        assert_eq!(
+            v["hooks"]["preToolUse"][0]["bash"],
+            "contextdroid hook copilot"
+        );
     }
 
     #[test]
@@ -6735,8 +6577,14 @@ mod tests {
         let v: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&hook_path).unwrap()).unwrap();
         assert_eq!(v["version"], 1);
-        assert_eq!(v["hooks"]["PreToolUse"][0]["command"], "rtk hook copilot");
-        assert_eq!(v["hooks"]["preToolUse"][0]["bash"], "rtk hook copilot");
+        assert_eq!(
+            v["hooks"]["PreToolUse"][0]["command"],
+            "contextdroid hook copilot"
+        );
+        assert_eq!(
+            v["hooks"]["preToolUse"][0]["bash"],
+            "contextdroid hook copilot"
+        );
     }
 
     #[test]

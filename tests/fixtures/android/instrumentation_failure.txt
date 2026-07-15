@@ -1,0 +1,3 @@
+> Task :app:connectedDebugAndroidTest FAILED
+INSTRUMENTATION_FAILED: Process crashed
+INSTRUMENTATION_RESULT: shortMsg=Process crashed.

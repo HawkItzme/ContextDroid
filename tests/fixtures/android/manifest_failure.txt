@@ -1,0 +1,2 @@
+> Task :app:processDebugMainManifest FAILED
+Manifest merger failed with multiple errors, see logs

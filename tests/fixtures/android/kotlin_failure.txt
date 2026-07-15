@@ -1,0 +1,3 @@
+> Task :app:compileDebugKotlin FAILED
+e: file:///workspace/app/src/main/java/com/example/app/Main.kt:42:17 Unresolved reference: missingApi
+Caused by: org.jetbrains.kotlin.gradle.tasks.CompilationErrorException: Compilation error

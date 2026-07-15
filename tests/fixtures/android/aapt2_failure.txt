@@ -1,0 +1,2 @@
+> Task :app:processDebugResources FAILED
+AAPT: error: resource color/missing_color not found.

@@ -214,9 +214,12 @@ pub fn run_verify(verbose: u8) -> Result<()> {
         let settings_path = claude_dir.join("settings.json");
         if settings_path.exists() {
             let content = fs::read_to_string(&settings_path).unwrap_or_default();
-            if content.contains("rtk hook claude") {
+            if content.contains(crate::hooks::constants::CLAUDE_HOOK_COMMAND) {
                 println!("PASS  native binary hook registered in settings.json");
-                println!("      command: rtk hook claude");
+                println!(
+                    "      command: {}",
+                    crate::hooks::constants::CLAUDE_HOOK_COMMAND
+                );
                 println!("      (no script file — integrity check not applicable)");
                 return Ok(());
             }

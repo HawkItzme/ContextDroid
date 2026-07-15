@@ -1,0 +1,2 @@
+07-15 10:11:12.123  4242  4243 F libc: Fatal signal 11 (SIGSEGV), code 1, fault addr 0x0 in tid 4243
+07-15 10:11:12.124  4242  4243 F DEBUG: Tombstone written to: /data/tombstones/tombstone_01

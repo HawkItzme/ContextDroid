@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 fn rtk_grep(args: &[&str]) -> (String, Option<i32>) {
     let mut a = vec!["grep"];
     a.extend_from_slice(args);
-    let out = Command::new(env!("CARGO_BIN_EXE_rtk"))
+    let out = Command::new(env!("CARGO_BIN_EXE_contextdroid"))
         .args(&a)
         .output()
         .expect("rtk");
@@ -158,7 +158,7 @@ fn piped_stdin_matches_grep_n() {
         c.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
         String::from_utf8_lossy(&c.wait_with_output().unwrap().stdout).into_owned()
     };
-    let rtk = feed(Command::new(env!("CARGO_BIN_EXE_rtk")).args(["grep", "apple"]));
+    let rtk = feed(Command::new(env!("CARGO_BIN_EXE_contextdroid")).args(["grep", "apple"]));
     let grep = feed(Command::new("grep").args(["-n", "apple"]));
     assert_eq!(rtk, grep, "piped stdin must equal grep -n");
 }

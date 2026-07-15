@@ -242,7 +242,10 @@ pub fn status_to_exit_code(status: std::process::ExitStatus) -> i32 {
 }
 
 // ISSUE #897: ChildGuard RAII prevents zombie processes that caused kernel panic
-pub const RAW_CAP: usize = 10_485_760; // 10 MiB
+fn append_raw_line(raw: &mut String, line: &str) {
+    raw.push_str(line);
+    raw.push('\n');
+}
 
 pub fn run_streaming(
     cmd: &mut Command,
@@ -326,8 +329,6 @@ pub fn run_streaming(
     let mut raw_stdout = String::new();
     let mut raw_stderr = String::new();
     let mut filtered = String::new();
-    let mut capped_out = false;
-    let mut capped_err = false;
     let mut saved_filter: Option<Box<dyn StreamFilter + '_>> = None;
     let mut filter_fd_is_stderr = false;
 
@@ -367,23 +368,9 @@ pub fn run_streaming(
                     StreamLine::Stdout(l) => (l, false),
                 };
                 if is_stderr {
-                    if !capped_err {
-                        if raw_stderr.len() + line.len() < RAW_CAP {
-                            raw_stderr.push_str(&line);
-                            raw_stderr.push('\n');
-                        } else {
-                            capped_err = true;
-                            eprintln!("[rtk] warning: stderr exceeds 10 MiB — capture truncated");
-                        }
-                    }
-                } else if !capped_out {
-                    if raw_stdout.len() + line.len() < RAW_CAP {
-                        raw_stdout.push_str(&line);
-                        raw_stdout.push('\n');
-                    } else {
-                        capped_out = true;
-                        eprintln!("[rtk] warning: stdout exceeds 10 MiB — filter input truncated");
-                    }
+                    append_raw_line(&mut raw_stderr, &line);
+                } else {
+                    append_raw_line(&mut raw_stdout, &line);
                 }
                 filter_fd_is_stderr = is_stderr;
                 if let Some(output) = filter.feed_line(&line) {
@@ -416,14 +403,8 @@ pub fn run_streaming(
     } else {
         let stderr_thread = std::thread::spawn(move || -> String {
             let mut raw_err = String::new();
-            let mut capped = false;
             for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                if raw_err.len() + line.len() < RAW_CAP {
-                    raw_err.push_str(&line);
-                    raw_err.push('\n');
-                } else if !capped {
-                    capped = true;
-                }
+                append_raw_line(&mut raw_err, &line);
             }
             raw_err
         });
@@ -437,21 +418,15 @@ pub fn run_streaming(
                 FilterMode::Streaming(_) => unreachable!("handled by is_streaming branch"),
                 FilterMode::Buffered(filter_fn) => {
                     for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                        if raw_stdout.len() + line.len() < RAW_CAP {
-                            raw_stdout.push_str(&line);
-                            raw_stdout.push('\n');
-                        } else if !capped_out {
-                            capped_out = true;
-                            eprintln!(
-                                "[rtk] warning: output exceeds 10 MiB — filter input truncated"
-                            );
-                        }
+                        append_raw_line(&mut raw_stdout, &line);
                     }
                     filtered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         filter_fn(&raw_stdout)
                     }))
                     .unwrap_or_else(|_| {
-                        eprintln!("[rtk] warning: filter panicked — passing through raw output");
+                        eprintln!(
+                            "[contextdroid] warning: filter panicked — passing through raw output"
+                        );
                         raw_stdout.clone()
                     });
                     match write!(out, "{}", filtered) {
@@ -462,15 +437,7 @@ pub fn run_streaming(
                 }
                 FilterMode::CaptureOnly => {
                     for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                        if raw_stdout.len() + line.len() < RAW_CAP {
-                            raw_stdout.push_str(&line);
-                            raw_stdout.push('\n');
-                        } else if !capped_out {
-                            capped_out = true;
-                            eprintln!(
-                                "[rtk] warning: output exceeds 10 MiB — filter input truncated"
-                            );
-                        }
+                        append_raw_line(&mut raw_stdout, &line);
                     }
                     filtered = raw_stdout.clone();
                 }
@@ -478,7 +445,10 @@ pub fn run_streaming(
         }
 
         raw_stderr = stderr_thread.join().unwrap_or_else(|e| {
-            eprintln!("[rtk] warning: stderr reader thread panicked: {:?}", e);
+            eprintln!(
+                "[contextdroid] warning: stderr reader thread panicked: {:?}",
+                e
+            );
             String::new()
         });
     }
@@ -557,6 +527,18 @@ pub(crate) mod tests {
     use super::*;
     use std::process::Command;
 
+    fn platform_shell(unix: &str, windows: &str) -> Command {
+        if cfg!(windows) {
+            let mut command = Command::new("powershell.exe");
+            command.args(["-NoProfile", "-Command", windows]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", unix]);
+            command
+        }
+    }
+
     struct LineFilter<F: FnMut(&str) -> Option<String>> {
         f: F,
     }
@@ -579,14 +561,24 @@ pub(crate) mod tests {
 
     #[test]
     fn test_exit_code_zero() {
-        let status = Command::new("true").status().unwrap();
+        let status = platform_shell("exit 0", "exit 0").status().unwrap();
         assert_eq!(status_to_exit_code(status), 0);
     }
 
     #[test]
     fn test_exit_code_nonzero() {
-        let status = Command::new("false").status().unwrap();
+        let status = platform_shell("exit 1", "exit 1").status().unwrap();
         assert_eq!(status_to_exit_code(status), 1);
+    }
+
+    #[test]
+    fn test_stream_capture_has_no_fixed_raw_size_cap() {
+        let mut captured = String::new();
+        let evidence = "x".repeat(10_485_760 + 1);
+
+        append_raw_line(&mut captured, &evidence);
+
+        assert_eq!(captured.len(), evidence.len() + 1);
     }
 
     #[cfg(unix)]
@@ -661,8 +653,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_run_streaming_passthrough_echo() {
-        let mut cmd = Command::new("echo");
-        cmd.arg("hello");
+        let mut cmd = platform_shell("printf 'hello\\n'", "[Console]::Out.WriteLine('hello')");
         let result = run_streaming(&mut cmd, StdinMode::Null, FilterMode::Passthrough).unwrap();
         assert_eq!(result.exit_code, 0);
         // Passthrough inherits TTY — raw/filtered are empty
@@ -672,15 +663,14 @@ pub(crate) mod tests {
     #[test]
     fn test_run_streaming_exit_code_preserved() {
         // nosemgrep: interpreter-execution
-        let mut cmd = Command::new("sh");
-        cmd.args(["-c", "exit 42"]);
+        let mut cmd = platform_shell("exit 42", "exit 42");
         let result = run_streaming(&mut cmd, StdinMode::Null, FilterMode::Passthrough).unwrap();
         assert_eq!(result.exit_code, 42);
     }
 
     #[test]
     fn test_run_streaming_exit_code_zero() {
-        let mut cmd = Command::new("true");
+        let mut cmd = platform_shell("exit 0", "exit 0");
         let result = run_streaming(&mut cmd, StdinMode::Null, FilterMode::Passthrough).unwrap();
         assert_eq!(result.exit_code, 0);
         assert!(result.success());
@@ -688,7 +678,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_run_streaming_exit_code_one() {
-        let mut cmd = Command::new("false");
+        let mut cmd = platform_shell("exit 1", "exit 1");
         let result = run_streaming(&mut cmd, StdinMode::Null, FilterMode::Passthrough).unwrap();
         assert_eq!(result.exit_code, 1);
         assert!(!result.success());
@@ -735,47 +725,39 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_run_streaming_raw_cap_at_10mb() {
+    fn test_run_streaming_stdout_exceeds_legacy_10mb_cap() {
         // nosemgrep: interpreter-execution
-        let mut cmd = Command::new("sh");
-        // ~11 MiB of 80-char lines (fast: fewer lines than `yes | head -6M`)
-        cmd.args([
-            "-c",
+        let mut cmd = platform_shell(
             "dd if=/dev/zero bs=1024 count=11264 2>/dev/null | tr '\\0' 'a' | fold -w 80",
-        ]);
+            "[Console]::Out.Write(('a' * 11534336))",
+        );
         let result = run_streaming(&mut cmd, StdinMode::Null, FilterMode::CaptureOnly).unwrap();
         assert!(
-            result.raw.len() <= 10_485_760 + 100,
-            "raw should be capped at ~10 MiB, got {} bytes",
+            result.raw.len() > 10_485_760,
+            "raw should preserve output beyond the legacy cap, got {} bytes",
             result.raw.len()
-        );
-        assert!(
-            result.raw.len() > 1_000_000,
-            "Should have captured significant data"
         );
     }
 
     #[test]
-    fn test_run_streaming_stderr_cap_at_10mb() {
+    fn test_run_streaming_stderr_exceeds_legacy_10mb_cap() {
         // nosemgrep: interpreter-execution
-        let mut cmd = Command::new("sh");
-        // ~11 MiB on stderr, nothing on stdout
-        cmd.args([
-            "-c",
+        let mut cmd = platform_shell(
             "dd if=/dev/zero bs=1024 count=11264 2>/dev/null | tr '\\0' 'a' | fold -w 80 1>&2",
-        ]);
+            "[Console]::Error.Write(('a' * 11534336))",
+        );
         let result = run_streaming(&mut cmd, StdinMode::Null, FilterMode::CaptureOnly).unwrap();
         // raw = raw_stdout + raw_stderr; stdout is empty so raw ≈ stderr size
         assert!(
-            result.raw.len() <= RAW_CAP + 200,
-            "stderr in raw should be capped at ~10 MiB, got {} bytes",
+            result.raw.len() > 10_485_760,
+            "raw stderr should preserve output beyond the legacy cap, got {} bytes",
             result.raw.len()
         );
     }
 
     #[test]
     fn test_child_guard_prevents_zombie() {
-        let mut cmd = Command::new("true");
+        let mut cmd = platform_shell("exit 0", "exit 0");
         let result = run_streaming(&mut cmd, StdinMode::Null, FilterMode::CaptureOnly);
         assert!(result.is_ok());
         assert_eq!(result.unwrap().exit_code, 0);
@@ -783,31 +765,37 @@ pub(crate) mod tests {
 
     #[test]
     fn test_run_streaming_null_stdin_cat() {
-        let mut cmd = Command::new("cat");
+        let mut cmd = platform_shell("cat", "$input | Out-Null");
         let result = run_streaming(&mut cmd, StdinMode::Null, FilterMode::Passthrough).unwrap();
         assert_eq!(result.exit_code, 0);
     }
 
     #[test]
     fn test_run_streaming_raw_contains_stdout() {
-        let mut cmd = Command::new("echo");
-        cmd.arg("test_output_xyz");
+        let mut cmd = platform_shell(
+            "printf 'test_output_xyz\\n'",
+            "[Console]::Out.WriteLine('test_output_xyz')",
+        );
         let result = run_streaming(&mut cmd, StdinMode::Null, FilterMode::CaptureOnly).unwrap();
         assert!(result.raw.contains("test_output_xyz"));
     }
 
     #[test]
     fn test_run_streaming_capture_only_filtered_equals_raw() {
-        let mut cmd = Command::new("echo");
-        cmd.arg("check_equality");
+        let mut cmd = platform_shell(
+            "printf 'check_equality\\n'",
+            "[Console]::Out.WriteLine('check_equality')",
+        );
         let result = run_streaming(&mut cmd, StdinMode::Null, FilterMode::CaptureOnly).unwrap();
         assert_eq!(result.filtered.trim(), result.raw_stdout.trim());
     }
 
     #[test]
     fn test_exec_capture_success() {
-        let mut cmd = Command::new("echo");
-        cmd.arg("hello_capture");
+        let mut cmd = platform_shell(
+            "printf 'hello_capture\\n'",
+            "[Console]::Out.WriteLine('hello_capture')",
+        );
         let result = exec_capture(&mut cmd).unwrap();
         assert!(result.success());
         assert_eq!(result.exit_code, 0);
@@ -816,7 +804,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_exec_capture_failure() {
-        let mut cmd = Command::new("false");
+        let mut cmd = platform_shell("exit 1", "exit 1");
         let result = exec_capture(&mut cmd).unwrap();
         assert!(!result.success());
         assert_eq!(result.exit_code, 1);
@@ -825,8 +813,10 @@ pub(crate) mod tests {
     #[test]
     fn test_exec_capture_stderr() {
         // nosemgrep: interpreter-execution
-        let mut cmd = Command::new("sh");
-        cmd.args(["-c", "echo err_msg >&2"]);
+        let mut cmd = platform_shell(
+            "printf 'err_msg\\n' >&2",
+            "[Console]::Error.WriteLine('err_msg')",
+        );
         let result = exec_capture(&mut cmd).unwrap();
         assert!(result.stderr.contains("err_msg"));
     }
@@ -834,8 +824,10 @@ pub(crate) mod tests {
     #[test]
     fn test_exec_capture_combined() {
         // nosemgrep: interpreter-execution
-        let mut cmd = Command::new("sh");
-        cmd.args(["-c", "echo out_msg; echo err_msg >&2"]);
+        let mut cmd = platform_shell(
+            "printf 'out_msg\\n'; printf 'err_msg\\n' >&2",
+            "[Console]::Out.WriteLine('out_msg'); [Console]::Error.WriteLine('err_msg')",
+        );
         let result = exec_capture(&mut cmd).unwrap();
         let combined = result.combined();
         assert!(combined.contains("out_msg"));

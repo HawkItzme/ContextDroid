@@ -1,0 +1,2 @@
+> Task :app:checkDebugDuplicateClasses FAILED
+Duplicate class com.example.shared.Model found in modules example-a and example-b

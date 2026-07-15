@@ -3,7 +3,7 @@
     "PreToolUse": [
       {
         "type": "command",
-        "command": "rtk hook",
+        "command": "contextdroid hook",
         "cwd": ".",
         "timeout": 5
       }

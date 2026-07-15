@@ -100,10 +100,9 @@ pub trait OutputParser: Sized {
     }
 }
 
-/// Truncate output using configured passthrough limit
+/// Return complete raw output for low-confidence fallback.
 pub fn truncate_passthrough(output: &str) -> String {
-    let max_chars = crate::core::config::limits().passthrough_max_chars;
-    truncate_output(output, max_chars)
+    output.to_string()
 }
 
 /// Truncate output to max length with ellipsis
@@ -259,6 +258,15 @@ mod tests {
         let emoji = "🎉".repeat(200);
         let result = truncate_output(&emoji, 100);
         assert!(result.contains("[RTK:PASSTHROUGH]"));
+    }
+
+    #[test]
+    fn test_low_confidence_passthrough_preserves_complete_raw_output() {
+        let raw = format!("root failure\n{}\nlast evidence", "x".repeat(100_000));
+
+        let result = truncate_passthrough(&raw);
+
+        assert_eq!(result, raw, "low-confidence fallback must be lossless");
     }
 
     #[test]

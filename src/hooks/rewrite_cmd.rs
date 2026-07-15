@@ -55,7 +55,12 @@ fn evaluate(cmd: &str, excluded: &[String], transparent_prefixes: &[String]) -> 
         return RewriteOutcome::Passthrough;
     }
 
-    match registry::rewrite_command(cmd, excluded, transparent_prefixes) {
+    match registry::rewrite_command_for_profile_with_config(
+        cmd,
+        registry::RewriteProfile::active(),
+        excluded,
+        transparent_prefixes,
+    ) {
         Some(rewritten) => match verdict {
             PermissionVerdict::Allow => RewriteOutcome::Allow(rewritten),
             _ => RewriteOutcome::Ask(rewritten),
@@ -126,11 +131,11 @@ mod tests {
         }
 
         #[test]
-        fn test_fd_dup_redirect_still_rewrites() {
-            assert!(matches!(
+        fn test_fd_dup_redirect_passthrough() {
+            assert_eq!(
                 evaluate("git status 2>&1", &[], &[]),
-                RewriteOutcome::Ask(_)
-            ));
+                RewriteOutcome::Passthrough
+            );
         }
 
         #[test]

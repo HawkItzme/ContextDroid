@@ -1,0 +1,2 @@
+> Task :app:kaptDebugKotlin FAILED
+kapt: error: annotation processing failed for com.example.app.Widget

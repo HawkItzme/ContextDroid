@@ -2,9 +2,9 @@ use anyhow::Result;
 use std::io::Read;
 
 use crate::core::guard::never_worse;
-use crate::core::stream::RAW_CAP;
 use crate::core::truncate::{CAP_LIST, CAP_WARNINGS};
 
+const MAX_PIPE_INPUT: usize = 10_485_760;
 const MAX_PIPE_MATCHES: usize = CAP_WARNINGS;
 const MAX_PIPE_FILES: usize = CAP_WARNINGS;
 const MAX_PIPE_DIRS: usize = CAP_LIST;
@@ -205,7 +205,7 @@ fn identity_filter(input: &str) -> String {
 fn apply_filter(filter_fn: fn(&str) -> String, input: &str) -> String {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| filter_fn(input)))
         .unwrap_or_else(|_| {
-            eprintln!("[rtk] warning: filter panicked — passing through raw output");
+            eprintln!("[contextdroid] warning: filter panicked — passing through raw output");
             input.to_string()
         })
 }
@@ -219,11 +219,11 @@ pub fn run(filter_name: Option<&str>, passthrough: bool) -> Result<()> {
 
     let mut buf = String::new();
     std::io::stdin()
-        .take((RAW_CAP + 1) as u64)
+        .take((MAX_PIPE_INPUT + 1) as u64)
         .read_to_string(&mut buf)
         .map_err(|e| anyhow::anyhow!("Failed to read stdin: {}", e))?;
-    if buf.len() > RAW_CAP {
-        anyhow::bail!("stdin exceeds {} byte limit", RAW_CAP);
+    if buf.len() > MAX_PIPE_INPUT {
+        anyhow::bail!("stdin exceeds {} byte limit", MAX_PIPE_INPUT);
     }
 
     let filter_fn = match filter_name {

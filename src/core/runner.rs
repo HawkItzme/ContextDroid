@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use std::process::Command;
 
+use crate::core::run_store::{ActiveRun, FinalizeDetails, ProcessOutcome, RunStart, RunStore};
 use crate::core::stream::{self, FilterMode, StdinMode, StreamFilter};
 use crate::core::tracking;
 
@@ -88,6 +89,182 @@ pub enum RunMode<'a> {
     Passthrough,
 }
 
+fn start_durable_run(cmd_label: &str) -> Option<ActiveRun> {
+    let store = match RunStore::default_store() {
+        Ok(store) => store,
+        Err(error) => {
+            eprintln!("[contextdroid] raw recovery unavailable: {error:#}");
+            return None;
+        }
+    };
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(error) => {
+            eprintln!("[contextdroid] raw recovery unavailable: {error}");
+            return None;
+        }
+    };
+    match store.start(RunStart {
+        command: cmd_label.to_string(),
+        cwd,
+        profile: crate::product::DEFAULT_PROFILE.to_string(),
+        output_mode: "balanced".to_string(),
+    }) {
+        Ok(run) => Some(run),
+        Err(error) => {
+            eprintln!("[contextdroid] raw recovery unavailable: {error:#}");
+            None
+        }
+    }
+}
+
+fn capture_durably(
+    cmd: &mut Command,
+    cmd_label: &str,
+    inherit_stdin: bool,
+) -> Result<Option<(ActiveRun, ProcessOutcome, String, String)>> {
+    let Some(mut run) = start_durable_run(cmd_label) else {
+        return Ok(None);
+    };
+    let outcome = run.capture_command(cmd, inherit_stdin)?;
+    let stdout = String::from_utf8_lossy(&run.read_stdout()?).into_owned();
+    let stderr = String::from_utf8_lossy(&run.read_stderr()?).into_owned();
+    Ok(Some((run, outcome, stdout, stderr)))
+}
+
+fn recovery_hint(run: Option<&ActiveRun>) -> Option<String> {
+    run.map(|run| {
+        format!(
+            "Run: {}\nRaw: contextdroid show {} --raw",
+            run.id().as_str(),
+            run.id().as_str()
+        )
+    })
+}
+
+fn finalize_durable(
+    run: Option<ActiveRun>,
+    outcome: ProcessOutcome,
+    summary: &str,
+    raw_fallback: bool,
+) {
+    finalize_durable_artifacts(
+        run,
+        outcome,
+        summary,
+        "{\"schema_version\":1,\"events\":[]}",
+        FinalizeDetails {
+            parser: Some("legacy".to_string()),
+            confidence: "unvalidated".to_string(),
+            raw_fallback,
+            ..FinalizeDetails::default()
+        },
+    );
+}
+
+fn finalize_durable_artifacts(
+    run: Option<ActiveRun>,
+    outcome: ProcessOutcome,
+    summary: &str,
+    diagnostics_json: &str,
+    details: FinalizeDetails,
+) {
+    let Some(run) = run else {
+        return;
+    };
+    match run.finalize(outcome, diagnostics_json, summary, details) {
+        Ok(stored) => crate::core::run_analytics::record_silent(&stored.metadata),
+        Err(error) => eprintln!("[contextdroid] failed to finalize raw recovery: {error:#}"),
+    }
+    if let Ok(store) = RunStore::default_store() {
+        if let Err(error) = store.prune(Default::default()) {
+            eprintln!("[contextdroid] failed to prune raw runs: {error:#}");
+        }
+    }
+}
+
+pub fn run_diagnostic<F>(
+    mut cmd: Command,
+    tool_name: &str,
+    args_display: &str,
+    parser: F,
+    opts: RunOptions<'_>,
+) -> Result<i32>
+where
+    F: Fn(&str, i32, &str) -> crate::diagnostics::DiagnosticRun,
+{
+    let timer = tracking::TimedExecution::start();
+    let cmd_label = format!("{} {}", tool_name, args_display);
+    let Some((run, outcome, raw_stdout, raw_stderr)) =
+        capture_durably(&mut cmd, &cmd_label, opts.inherit_stdin)
+            .with_context(|| format!("Failed to run {}", tool_name))?
+    else {
+        let stdin_mode = if opts.inherit_stdin {
+            StdinMode::Inherit
+        } else {
+            StdinMode::Null
+        };
+        let result = stream::run_streaming(&mut cmd, stdin_mode, FilterMode::CaptureOnly)
+            .with_context(|| format!("Failed to run {}", tool_name))?;
+        print!("{}", result.raw_stdout);
+        eprint!("{}", result.raw_stderr);
+        return Ok(result.exit_code);
+    };
+
+    let exit_code = outcome.shell_exit_code();
+    let raw = format!("{}{}", raw_stdout, raw_stderr);
+    let diagnostic = parser(&raw, exit_code, run.id().as_str());
+    let confidence = match diagnostic.confidence {
+        crate::diagnostics::ParseConfidence::High => "high",
+        crate::diagnostics::ParseConfidence::Medium => "medium",
+        crate::diagnostics::ParseConfidence::Low => "low",
+    };
+    let raw_fallback = diagnostic.confidence == crate::diagnostics::ParseConfidence::Low;
+    let parser_name = diagnostic.parser.name.clone();
+    let mut diagnostics = serde_json::to_value(&diagnostic)?;
+    if let Some(object) = diagnostics.as_object_mut() {
+        object.insert("schema_version".into(), serde_json::Value::from(1));
+    }
+    let diagnostics_json = serde_json::to_string_pretty(&diagnostics)?;
+    let omission_preserved = diagnostic.omissions.preserved.values().sum::<usize>() as u64;
+    let omission_collapsed = diagnostic.omissions.collapsed.values().sum::<usize>() as u64;
+    let shown = crate::diagnostics::render(
+        &diagnostic,
+        &raw,
+        crate::diagnostics::OutputMode::Balanced,
+        5,
+    );
+    finalize_durable_artifacts(
+        Some(run),
+        outcome,
+        &shown,
+        &diagnostics_json,
+        FinalizeDetails {
+            parser: Some(parser_name),
+            confidence: confidence.to_string(),
+            raw_fallback,
+            parser_error: false,
+            omission_preserved,
+            omission_collapsed,
+            fixture_preservation: true,
+        },
+    );
+
+    if raw_fallback {
+        print!("{}", raw_stdout);
+        eprint!("{}", raw_stderr);
+    } else {
+        print!("{}", shown);
+    }
+    timer.track(
+        &cmd_label,
+        &format!("contextdroid {}", cmd_label),
+        &raw,
+        &shown,
+    );
+    Ok(exit_code)
+}
+
 fn run_captured_filter<F>(
     mut cmd: Command,
     tool_name: &str,
@@ -99,44 +276,67 @@ fn run_captured_filter<F>(
 where
     F: Fn(&str, i32) -> String,
 {
-    let stdin_mode = if opts.inherit_stdin {
-        StdinMode::Inherit
-    } else {
-        StdinMode::Null
-    };
-    let result = stream::run_streaming(&mut cmd, stdin_mode, FilterMode::CaptureOnly)
+    let durable = capture_durably(&mut cmd, cmd_label, opts.inherit_stdin)
         .with_context(|| format!("Failed to run {}", tool_name))?;
-
-    let exit_code = result.exit_code;
-    let raw = &result.raw;
-    let raw_stdout = &result.raw_stdout;
+    let (durable_run, outcome, raw_stdout, raw_stderr) = match durable {
+        Some((run, outcome, stdout, stderr)) => (Some(run), outcome, stdout, stderr),
+        None => {
+            let stdin_mode = if opts.inherit_stdin {
+                StdinMode::Inherit
+            } else {
+                StdinMode::Null
+            };
+            let result = stream::run_streaming(&mut cmd, stdin_mode, FilterMode::CaptureOnly)
+                .with_context(|| format!("Failed to run {}", tool_name))?;
+            (
+                None,
+                ProcessOutcome::ExitCode(result.exit_code),
+                result.raw_stdout,
+                result.raw_stderr,
+            )
+        }
+    };
+    let exit_code = outcome.shell_exit_code();
+    let raw = format!("{}{}", raw_stdout, raw_stderr);
 
     if opts.skip_filter_on_failure && exit_code != 0 {
-        if !result.raw_stdout.trim().is_empty() {
-            print!("{}", result.raw_stdout);
+        if !raw_stdout.trim().is_empty() {
+            print!("{}", raw_stdout);
         }
-        if !result.raw_stderr.trim().is_empty() {
-            eprint!("{}", result.raw_stderr);
+        if !raw_stderr.trim().is_empty() {
+            eprint!("{}", raw_stderr);
         }
-        timer.track(cmd_label, &format!("rtk {}", cmd_label), raw, raw);
+        finalize_durable(durable_run, outcome, &raw, true);
+        timer.track(
+            cmd_label,
+            &format!("contextdroid {}", cmd_label),
+            &raw,
+            &raw,
+        );
         return Ok(exit_code);
     }
 
     let text_to_filter = if opts.filter_stdout_only {
-        raw_stdout
+        &raw_stdout
     } else {
-        raw
+        &raw
     };
     let filtered = filter_fn(text_to_filter, exit_code);
 
     let raw_for_tracking = if opts.filter_stdout_only {
-        raw_stdout
+        &raw_stdout
     } else {
-        raw
+        &raw
     };
 
-    let shown = if let Some(label) = opts.tee_label {
-        print_with_hint(&filtered, raw, raw_for_tracking, label, exit_code)
+    let shown = if durable_run.is_some() {
+        emit_guarded(
+            &filtered,
+            recovery_hint(durable_run.as_ref()).as_deref(),
+            raw_for_tracking,
+        )
+    } else if let Some(label) = opts.tee_label {
+        print_with_hint(&filtered, &raw, raw_for_tracking, label, exit_code)
     } else {
         let guarded = crate::core::guard::never_worse(raw_for_tracking, &filtered).to_string();
         if opts.no_trailing_newline {
@@ -149,10 +349,11 @@ where
 
     timer.track(
         cmd_label,
-        &format!("rtk {}", cmd_label),
+        &format!("contextdroid {}", cmd_label),
         raw_for_tracking,
         &shown,
     );
+    finalize_durable(durable_run, outcome, &shown, false);
     Ok(exit_code)
 }
 
@@ -184,6 +385,34 @@ pub fn run(
             timer,
         ),
         RunMode::Streamed(filter) => {
+            if let Some((run, outcome, raw_stdout, raw_stderr)) =
+                capture_durably(&mut cmd, &cmd_label, false)
+                    .with_context(|| format!("Failed to run {}", tool_name))?
+            {
+                let exit_code = outcome.shell_exit_code();
+                let raw = format!("{}{}", raw_stdout, raw_stderr);
+                let mut filter = filter;
+                let mut filtered = String::new();
+                for line in raw_stdout.lines().chain(raw_stderr.lines()) {
+                    if let Some(output) = filter.feed_line(line) {
+                        filtered.push_str(&output);
+                    }
+                }
+                filtered.push_str(&filter.flush());
+                if let Some(post) = filter.on_exit(exit_code, &raw) {
+                    filtered.push_str(&post);
+                }
+                let shown = emit_guarded(&filtered, recovery_hint(Some(&run)).as_deref(), &raw);
+                finalize_durable(Some(run), outcome, &shown, false);
+                timer.track(
+                    &cmd_label,
+                    &format!("contextdroid {}", cmd_label),
+                    &raw,
+                    &shown,
+                );
+                return Ok(exit_code);
+            }
+
             let result =
                 stream::run_streaming(&mut cmd, StdinMode::Null, FilterMode::Streaming(filter))
                     .with_context(|| format!("Failed to run {}", tool_name))?;
@@ -198,7 +427,7 @@ pub fn run(
 
             timer.track(
                 &cmd_label,
-                &format!("rtk {}", cmd_label),
+                &format!("contextdroid {}", cmd_label),
                 &result.raw,
                 &result.filtered,
             );

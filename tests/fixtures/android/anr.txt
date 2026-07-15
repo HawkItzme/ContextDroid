@@ -1,0 +1,2 @@
+07-15 10:11:12.123  1000  1001 E ActivityManager: ANR in com.example.app
+07-15 10:11:12.124  1000  1001 E ActivityManager: Reason: Input dispatching timed out

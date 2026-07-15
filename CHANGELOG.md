@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.0-alpha.1] - Unreleased
+
+- Establish ContextDroid as an independently maintained Android-focused RTK downstream.
+- Add conservative profiles, universal rewrite hard stops, and raw fallback.
+- Add durable separate stdout/stderr run storage, recovery selectors, and retention.
+- Add typed Android Gradle, selected ADB, Logcat, and stack-frame diagnostics.
+- Add local-only run analytics, gain/quality proxies, and remove remote telemetry.
+- Add tested Claude, Cursor, and Codex integration lifecycles and explicit RTK migration.
+- Add product provenance, safety, architecture, filter, benchmark, and release documents.
+
 All notable changes to rtk (Rust Token Killer) will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),

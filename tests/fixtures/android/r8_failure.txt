@@ -1,0 +1,2 @@
+> Task :app:minifyReleaseWithR8 FAILED
+R8: Missing class com.example.optional.MissingApi

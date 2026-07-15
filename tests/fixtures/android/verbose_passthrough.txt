@@ -1,0 +1,2 @@
+Command: ./gradlew assembleDebug --full-stacktrace --info
+This fixture asserts lossless or raw behavior for explicit verbose flags.

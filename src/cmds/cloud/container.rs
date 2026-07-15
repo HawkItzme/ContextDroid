@@ -45,7 +45,7 @@ where
         |stdout| match serde_json::from_str::<Value>(stdout) {
             Ok(json) => filter_fn(&json),
             Err(e) => {
-                eprintln!("[rtk] {}: JSON parse failed: {}", tool, e);
+                eprintln!("[contextdroid] {}: JSON parse failed: {}", tool, e);
                 stdout.to_string()
             }
         },

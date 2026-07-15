@@ -61,7 +61,9 @@ fn project_filter_params(project_path: Option<&str>) -> (Option<String>, Option<
     }
 }
 
-use super::constants::{DEFAULT_HISTORY_DAYS, HISTORY_DB, RTK_DATA_DIR};
+use super::constants::DEFAULT_HISTORY_DAYS;
+#[cfg(not(test))]
+use super::constants::{HISTORY_DB, RTK_DATA_DIR};
 
 /// Main tracking interface for recording and querying command history.
 ///
@@ -1218,12 +1220,20 @@ fn categorize_command(rtk_cmd: &str) -> String {
 }
 
 fn get_db_path() -> Result<PathBuf> {
-    // Priority 1: Environment variable RTK_DB_PATH
-    if let Ok(custom_path) = std::env::var("RTK_DB_PATH") {
+    // Priority 1: ContextDroid analytics override.
+    if let Ok(custom_path) = std::env::var("CONTEXTDROID_ANALYTICS_DB") {
         return Ok(PathBuf::from(custom_path));
     }
 
+    // Unit tests must never write the user's real local-data directory.
+    #[cfg(test)]
+    return Ok(std::env::temp_dir().join(format!(
+        "contextdroid-tracking-tests-{}.db",
+        std::process::id()
+    )));
+
     // Priority 2: Configuration file
+    #[cfg(not(test))]
     if let Ok(config) = crate::core::config::Config::load() {
         if let Some(db_path) = config.tracking.database_path {
             return Ok(db_path);
@@ -1231,8 +1241,11 @@ fn get_db_path() -> Result<PathBuf> {
     }
 
     // Priority 3: Default platform-specific location
-    let data_dir = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
-    Ok(data_dir.join(RTK_DATA_DIR).join(HISTORY_DB))
+    #[cfg(not(test))]
+    {
+        let data_dir = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
+        Ok(data_dir.join(RTK_DATA_DIR).join(HISTORY_DB))
+    }
 }
 
 /// Individual parse failure record.
@@ -1544,7 +1557,7 @@ mod tests {
         assert_eq!(pt.saved_tokens, 0);
     }
 
-    // 7. get_db_path respects environment variable RTK_DB_PATH
+    // 7. get_db_path respects environment variable CONTEXTDROID_ANALYTICS_DB
     // 8. get_db_path falls back to default when no custom config
     // Combined into one test to avoid env var race between parallel tests
     #[test]
@@ -1554,16 +1567,19 @@ mod tests {
         static ENV_LOCK: Mutex<()> = Mutex::new(());
         let _guard = ENV_LOCK.lock().unwrap();
 
-        let custom_path = env::temp_dir().join("rtk_test_custom.db");
-        env::set_var("RTK_DB_PATH", &custom_path);
+        let custom_path = env::temp_dir().join("contextdroid_test_custom.db");
+        env::set_var("CONTEXTDROID_ANALYTICS_DB", &custom_path);
         let db_path = get_db_path().expect("Failed to get db path");
         assert_eq!(db_path, custom_path);
 
-        env::remove_var("RTK_DB_PATH");
+        env::remove_var("CONTEXTDROID_ANALYTICS_DB");
         let db_path = get_db_path().expect("Failed to get db path");
         assert!(
-            db_path.ends_with("rtk/history.db"),
-            "expected default path ending with rtk/history.db, got: {}",
+            db_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("contextdroid-tracking-tests-")),
+            "expected isolated ContextDroid test database, got: {}",
             db_path.display()
         );
     }

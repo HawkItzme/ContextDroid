@@ -1,5 +1,6 @@
 //! Matches shell commands against known RTK rewrite rules to decide how to handle them.
 
+use clap::ValueEnum;
 use lazy_static::lazy_static;
 use regex::{Regex, RegexSet};
 
@@ -19,6 +20,185 @@ pub enum Classification {
         base_command: String,
     },
     Ignored,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum RewriteProfile {
+    ContextdroidSafe,
+    AndroidOnly,
+    RtkCompatible,
+}
+
+impl RewriteProfile {
+    pub fn active() -> Self {
+        match std::env::var("CONTEXTDROID_PROFILE").as_deref() {
+            Ok("android-only") => Self::AndroidOnly,
+            Ok("rtk-compatible") => Self::RtkCompatible,
+            _ => Self::ContextdroidSafe,
+        }
+    }
+}
+
+/// Apply the automatic-rewrite boundary for a ContextDroid profile.
+///
+/// Explicit ContextDroid subcommands remain available independently of this function.
+/// This classifier is deliberately fail-closed: shell composition, redirection,
+/// structured output, binary operations, and unknown commands are never rewritten.
+pub fn rewrite_command_for_profile(cmd: &str, profile: RewriteProfile) -> Option<String> {
+    rewrite_command_for_profile_with_config(cmd, profile, &[], &[])
+}
+
+pub fn rewrite_command_for_profile_with_config(
+    cmd: &str,
+    profile: RewriteProfile,
+    excluded: &[String],
+    transparent_prefixes: &[String],
+) -> Option<String> {
+    let trimmed = cmd.trim();
+    if trimmed.is_empty() || is_universal_hard_stop(trimmed) {
+        return None;
+    }
+    let compiled_exclusions = compile_exclude_patterns(excluded);
+    if is_excluded(trimmed, &compiled_exclusions) {
+        return None;
+    }
+
+    if let Some(android) = rewrite_verified_android(trimmed) {
+        return Some(android);
+    }
+
+    match profile {
+        RewriteProfile::AndroidOnly => None,
+        RewriteProfile::ContextdroidSafe => rewrite_safe_git(trimmed),
+        RewriteProfile::RtkCompatible => rewrite_command(trimmed, excluded, transparent_prefixes)
+            .map(|rewritten| rewritten.replace("rtk ", "contextdroid ")),
+    }
+}
+
+fn is_universal_hard_stop(cmd: &str) -> bool {
+    if cmd.bytes().any(|byte| matches!(byte, 0 | b'\n' | b'\r'))
+        || cmd.contains("$('")
+        || cmd.contains("$(")
+        || cmd.contains('`')
+    {
+        return true;
+    }
+    let tokens = tokenize(cmd);
+    if tokens.iter().any(|token| {
+        matches!(
+            token.kind,
+            TokenKind::Pipe | TokenKind::Operator | TokenKind::Redirect | TokenKind::Shellism
+        )
+    }) {
+        return true;
+    }
+
+    let lower = cmd.to_ascii_lowercase();
+    let base = lower
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default();
+    let unsafe_base = matches!(
+        base,
+        "grep"
+            | "rg"
+            | "find"
+            | "fd"
+            | "tree"
+            | "cat"
+            | "curl"
+            | "wget"
+            | "semgrep"
+            | "trivy"
+            | "snyk"
+    );
+    let structured = lower.split_whitespace().any(|arg| {
+        arg == "--json"
+            || arg.starts_with("--json=")
+            || arg == "--xml"
+            || arg.starts_with("--xml=")
+            || arg == "--csv"
+            || arg == "-z"
+    });
+
+    unsafe_base || structured
+}
+
+fn rewrite_verified_android(cmd: &str) -> Option<String> {
+    let mut parts = cmd.split_whitespace();
+    let binary = parts.next()?;
+    let normalized = binary.rsplit(['/', '\\']).next().unwrap_or(binary);
+    let args: Vec<&str> = parts.collect();
+
+    if matches!(normalized, "gradlew" | "gradlew.bat") {
+        let first_task = args.iter().find(|arg| !arg.starts_with('-'))?;
+        let task = first_task.trim_start_matches(':').to_ascii_lowercase();
+        let verified = [
+            "assemble",
+            "bundle",
+            "build",
+            "install",
+            "test",
+            "connected",
+            "manageddevice",
+            "lint",
+            "dependencies",
+            "dependencyinsight",
+        ]
+        .iter()
+        .any(|family| task.contains(family));
+        return verified.then(|| format!("contextdroid gradlew {}", args.join(" ")));
+    }
+
+    if normalized == "adb" {
+        let subcommand = args.first().copied().unwrap_or_default();
+        return match subcommand {
+            "devices" | "install" | "uninstall" => {
+                Some(format!("contextdroid adb {}", args.join(" ")))
+            }
+            "logcat" => Some(format!("contextdroid logcat {}", args[1..].join(" "))),
+            _ => None,
+        };
+    }
+
+    None
+}
+
+fn rewrite_safe_git(cmd: &str) -> Option<String> {
+    let mut parts = cmd.split_whitespace();
+    if parts.next()? != "git" {
+        return None;
+    }
+    let subcommand = parts.next()?;
+    let args: Vec<&str> = parts.collect();
+    match subcommand {
+        "status" if !args.iter().any(|arg| *arg == "--porcelain" || *arg == "-z") => {
+            Some(format!("contextdroid git status{}", join_args(&args)))
+        }
+        "log"
+            if !args.iter().any(|arg| {
+                arg.starts_with("--format")
+                    || arg.starts_with("--pretty=format")
+                    || *arg == "--raw"
+                    || *arg == "-p"
+                    || *arg == "--patch"
+            }) =>
+        {
+            Some(format!("contextdroid git log{}", join_args(&args)))
+        }
+        _ => None,
+    }
+}
+
+fn join_args(args: &[&str]) -> String {
+    if args.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", args.join(" "))
+    }
 }
 
 /// Average token counts per category for estimation when no output_len available.
@@ -383,7 +563,7 @@ fn strip_absolute_path(cmd: &str) -> String {
 }
 
 pub fn prefix_contains_rtk_disabled(prefix_part: &str) -> bool {
-    prefix_part.contains("RTK_DISABLED=")
+    prefix_part.contains("CONTEXTDROID_DISABLED=") || prefix_part.contains("RTK_DISABLED=")
 }
 
 /// Check if a command has RTK_DISABLED= prefix in its env prefix portion.
@@ -746,12 +926,11 @@ fn rewrite_segment_inner(
 
     let (env_prefix, rest_after_env) = strip_disabled_prefix(trimmed);
     if !env_prefix.is_empty() {
-        // #345: RTK_DISABLED=1 in env prefix → skip rewrite entirely
-        // #508: warn on stderr so agents learn to stop overusing it
-        if env_prefix.contains("RTK_DISABLED=") {
+        // A product or legacy disable variable in the env prefix skips rewriting.
+        if prefix_contains_rtk_disabled(env_prefix) {
             eprintln!(
-                "[rtk] RTK_DISABLED=1 detected — skipping filter for this command. \
-                 Remove RTK_DISABLED=1 to restore token savings."
+                "[contextdroid] disable override detected — skipping optimization for this command. \
+                 Remove CONTEXTDROID_DISABLED=1 to restore optimization."
             );
             return None;
         }
@@ -879,6 +1058,61 @@ fn strip_word_prefix<'a>(cmd: &'a str, prefix: &str) -> Option<&'a str> {
 mod tests {
     use super::super::report::RtkStatus;
     use super::*;
+
+    #[test]
+    fn test_safe_profile_does_not_rewrite_universal_hard_stops() {
+        for command in [
+            "rg TODO src",
+            "find . -type f",
+            "git diff",
+            "curl https://example.com/data.json",
+            "git log | head -5",
+            "cargo test > results.txt",
+        ] {
+            assert_eq!(
+                rewrite_command_for_profile(command, RewriteProfile::ContextdroidSafe),
+                None,
+                "unsafe rewrite for {command}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_safe_profile_rewrites_only_approved_human_git_forms() {
+        assert_eq!(
+            rewrite_command_for_profile("git status", RewriteProfile::ContextdroidSafe),
+            Some("contextdroid git status".into())
+        );
+        assert_eq!(
+            rewrite_command_for_profile("git log --oneline -5", RewriteProfile::ContextdroidSafe),
+            Some("contextdroid git log --oneline -5".into())
+        );
+    }
+
+    #[test]
+    fn test_all_profiles_reject_shell_injection_and_redirection() {
+        for profile in [
+            RewriteProfile::ContextdroidSafe,
+            RewriteProfile::AndroidOnly,
+            RewriteProfile::RtkCompatible,
+        ] {
+            for command in [
+                "git status; echo injected",
+                "git status && echo injected",
+                "git status | cat",
+                "git status > status.txt",
+                "git log $(whoami)",
+                "git log `whoami`",
+                "git status\nwhoami",
+            ] {
+                assert_eq!(
+                    rewrite_command_for_profile(command, profile),
+                    None,
+                    "profile {profile:?} rewrote {command:?}"
+                );
+            }
+        }
+    }
 
     fn rewrite_command_no_prefixes(cmd: &str, excluded: &[String]) -> Option<String> {
         super::rewrite_command(cmd, excluded, &[])

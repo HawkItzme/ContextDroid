@@ -1,0 +1,2 @@
+> Task :app:kspDebugKotlin FAILED
+e: [ksp] No provider found for com.example.app.Repository

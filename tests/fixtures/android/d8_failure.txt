@@ -1,0 +1,2 @@
+> Task :app:mergeExtDexDebug FAILED
+D8: Cannot fit requested classes in a single dex file

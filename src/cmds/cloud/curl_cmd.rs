@@ -176,29 +176,25 @@ mod tests {
     }
 
     #[test]
-    fn test_filter_curl_long_output_truncated() {
+    fn test_filter_curl_long_output_passes_through_without_loss() {
         let long: String = "x".repeat(1000);
         let result = filter_curl_output(&long, true);
-        assert!(result.content.starts_with('x'));
-        assert!(result.content.contains("bytes total"));
-        assert!(result.content.contains("1000"));
-        assert!(result.content.len() < 600);
-        assert!(result.tee_hint.is_some(), "TTY truncation must emit a hint");
+        assert_eq!(&*result.content, long);
+        assert!(result.tee_hint.is_none());
     }
 
     #[test]
-    fn test_filter_curl_multibyte_boundary() {
+    fn test_filter_curl_multibyte_boundary_passes_through_exactly() {
         let content = "a".repeat(499) + "é";
         let result = filter_curl_output(&content, true);
-        assert!(result.content.contains("bytes total"));
-        assert!(result.content.len() < 600);
+        assert_eq!(&*result.content, content);
     }
 
     #[test]
-    fn test_filter_curl_exact_500_bytes() {
+    fn test_filter_curl_exact_500_bytes_passes_through_exactly() {
         let content = "a".repeat(500);
         let result = filter_curl_output(&content, true);
-        assert!(result.content.contains("bytes total"));
+        assert_eq!(&*result.content, content);
     }
 
     // --- #1536: large JSON must remain parseable for downstream tools ---
