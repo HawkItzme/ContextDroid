@@ -13,3 +13,21 @@ and recovery. Uninstall removes only that block.
 
 Preview and status do not write. Lifecycle tests use temporary roots. Actual global
 installation changes user configuration and must be initiated explicitly by the user.
+
+Preview the exact managed change:
+
+```text
+contextdroid integrations claude preview
+contextdroid integrations cursor preview --cursor-schema-version 1
+contextdroid integrations codex preview --root .
+```
+
+Install after review:
+
+```text
+contextdroid integrations claude install
+contextdroid integrations cursor install --cursor-schema-version 1
+contextdroid integrations codex install --root .
+```
+
+Replace `install` with `status` or `uninstall` to inspect or remove the managed entry.

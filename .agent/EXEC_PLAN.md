@@ -391,3 +391,13 @@ integrations/migration; documentation/benchmarks/packaging. Do not stage pre-exi
   long-running live-stream UX need broader platform stress testing.
 - Publishing, tags, release assets, pushes, and global integration installation remain
   outside this execution and require explicit user approval.
+
+### Post-implementation documentation clarification
+
+- 2026-07-15: Installation documentation now separates source binary builds, explicit agent
+  integration lifecycle, and future published packages. Preview remains the recommended first
+  integration action, but concrete install/status/uninstall commands are now shown.
+- 2026-07-15: Release-readiness documentation now distinguishes cross-platform/live-Android
+  validation blockers, optional Homebrew distribution work, and explicit publication approval.
+  Homebrew is not required for a direct-archive alpha; publishing approval is an authorization
+  gate rather than a technical blocker.
