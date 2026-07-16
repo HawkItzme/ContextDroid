@@ -6,10 +6,10 @@
 - [ ] All product-facing RTK names and URLs migrated or explicitly labeled legacy.
 - [x] Synthetic fixture matrix complete and provenance documented.
 - [x] Exit parity, raw recovery, parser preservation, and profile hard stops green.
-- [x] `cargo fmt --all --check` green with raw output.
-- [x] `cargo test --all` green with raw output.
-- [x] `cargo clippy --all-targets --all-features -- -D warnings` green with raw output.
-- [x] `cargo build --release` green with raw output.
+- [x] Stabilization `cargo fmt --all --check` green with raw output.
+- [x] Stabilization `cargo test --all` green with raw output (2,281 passed, 8 ignored).
+- [x] Stabilization `cargo clippy --all-targets --all-features -- -D warnings` green with raw output.
+- [x] Stabilization `cargo build --release` green with raw output.
 - [x] README limitations and benchmark measurements match current local evidence.
 - [x] No remote telemetry or ContextDroid network analytics dependency exists.
 
@@ -21,9 +21,10 @@
 - [ ] Representative live Android Gradle/AGP builds and failure families validated.
 - [ ] Emulator/device ADB and Logcat scenarios validate evidence, exit parity, and raw recovery.
 
-The configured CI matrix includes Ubuntu, Windows, and macOS, but it has not run against the
-current uncommitted changes. Local verification is Windows-only. Integration unit tests use
-temporary roots; actual supported-host lifecycle checks remain required.
+CI now requires Ubuntu, Windows, and macOS tests/release builds, deterministic docs/help checks,
+a pinned AGP 9.3/Gradle 9.5/JDK 17/API 37 Android sample, and Linux temporary-HOME Claude plus
+compact `git status` smoke. Those new jobs have not yet run against this branch; local evidence
+remains Windows-only.
 
 ## Optional distribution work
 

@@ -25,50 +25,20 @@ enum GradlewTask {
     ConnectedTest,
     Lint,
     Dependencies,
+    Mixed,
     Other,
 }
 
 fn detect_task(args: &[String]) -> GradlewTask {
-    let tasks: Vec<GradlewTask> = args
-        .iter()
-        .filter(|a| !a.starts_with('-') && a.to_lowercase() != "clean")
-        .map(|task| classify_task_name(&task.to_lowercase()))
-        .collect();
-
-    let Some(first) = tasks.first() else {
-        return GradlewTask::Build;
-    };
-    if tasks.iter().all(|task| task == first) {
-        match first {
-            GradlewTask::Build => GradlewTask::Build,
-            GradlewTask::Test => GradlewTask::Test,
-            GradlewTask::ConnectedTest => GradlewTask::ConnectedTest,
-            GradlewTask::Lint => GradlewTask::Lint,
-            GradlewTask::Dependencies => GradlewTask::Dependencies,
-            GradlewTask::Other => GradlewTask::Other,
-        }
-    } else {
-        GradlewTask::Other
-    }
-}
-
-fn classify_task_name(task: &str) -> GradlewTask {
-    if task.contains("connected") {
-        GradlewTask::ConnectedTest
-    } else if task.contains("test") || task == "check" {
-        GradlewTask::Test
-    } else if task.contains("assemble")
-        || task.contains("build")
-        || task.contains("bundle")
-        || task.contains("install")
-    {
-        GradlewTask::Build
-    } else if task.contains("lint") || task.contains("ktlint") || task.contains("detekt") {
-        GradlewTask::Lint
-    } else if task.contains("dependencies") || task.contains("dependencyinsight") {
-        GradlewTask::Dependencies
-    } else {
-        GradlewTask::Other
+    use crate::cmds::android::classifier::GradleFamily;
+    match crate::cmds::android::classifier::classify_gradle_args(args) {
+        Some(GradleFamily::Build) => GradlewTask::Build,
+        Some(GradleFamily::Test) => GradlewTask::Test,
+        Some(GradleFamily::ConnectedTest) => GradlewTask::ConnectedTest,
+        Some(GradleFamily::Lint) => GradlewTask::Lint,
+        Some(GradleFamily::Dependencies) => GradlewTask::Dependencies,
+        Some(GradleFamily::Mixed) => GradlewTask::Mixed,
+        None => GradlewTask::Other,
     }
 }
 
@@ -122,7 +92,11 @@ impl StreamFilter for BuildLineFilter {
     }
 }
 
-pub fn run(args: &[String], verbose: u8) -> Result<i32> {
+pub fn run(
+    args: &[String],
+    verbose: u8,
+    runtime: &crate::core::runtime::RuntimeContext,
+) -> Result<i32> {
     // Verbose flags bypass filtering — user wants full output
     if args
         .iter()
@@ -136,7 +110,7 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
     let args_display = args.join(" ");
     let tool = gradlew_binary();
 
-    if std::env::var("CONTEXTDROID_PROFILE").as_deref() == Ok("rtk-compatible") {
+    if runtime.profile == "rtk-compatible" {
         return run_legacy(cmd, tool, &args_display, detect_task(args), verbose, args);
     }
 
@@ -149,16 +123,32 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
         | GradlewTask::Test
         | GradlewTask::ConnectedTest
         | GradlewTask::Lint
-        | GradlewTask::Dependencies => {
+        | GradlewTask::Dependencies
+        | GradlewTask::Mixed => {
             let command = format!("{} {}", tool, args_display);
+            let stack_config = runtime.android.clone();
             runner::run_diagnostic(
                 cmd,
                 tool,
                 &args_display,
                 move |raw, exit_code, run_id| {
-                    crate::cmds::android::gradle::parse(&command, raw, exit_code, run_id)
+                    crate::cmds::android::gradle::parse_with_config(
+                        &command,
+                        raw,
+                        exit_code,
+                        run_id,
+                        &stack_config,
+                    )
                 },
-                RunOptions::default(),
+                RunOptions {
+                    profile: &runtime.profile,
+                    output_mode: if detect_task(args) == GradlewTask::Mixed {
+                        crate::diagnostics::OutputMode::Balanced
+                    } else {
+                        runtime.output_mode
+                    },
+                    ..RunOptions::default()
+                },
             )
         }
     }
@@ -207,6 +197,11 @@ fn run_legacy(
             args_display,
             filter_dependencies,
             RunOptions::with_tee("gradlew_deps"),
+        ),
+        GradlewTask::Mixed => runner::run_passthrough(
+            gradlew_binary(),
+            &args.iter().map(OsString::from).collect::<Vec<_>>(),
+            verbose,
         ),
         GradlewTask::Other => {
             let osargs: Vec<OsString> = args.iter().map(OsString::from).collect();
@@ -630,7 +625,7 @@ mod tests {
     fn test_detect_mixed_task_families_is_conservative() {
         let args = vec!["testDebugUnitTest".to_string(), "assembleDebug".to_string()];
 
-        assert_eq!(detect_task(&args), GradlewTask::Other);
+        assert_eq!(detect_task(&args), GradlewTask::Mixed);
     }
 
     #[test]
@@ -658,10 +653,10 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_clean_alone_is_build() {
-        // "clean" alone → task.is_empty() after filtering → Build (strips task noise)
+    fn test_detect_clean_alone_is_passthrough() {
+        // Clean alone has no verified diagnostic family and remains unchanged.
         let args = vec!["clean".to_string()];
-        assert_eq!(detect_task(&args), GradlewTask::Build);
+        assert_eq!(detect_task(&args), GradlewTask::Other);
     }
 
     #[test]

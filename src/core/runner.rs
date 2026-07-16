@@ -31,7 +31,6 @@ pub fn print_with_hint(
     emit_guarded(filtered, hint.as_deref(), guard_raw)
 }
 
-#[derive(Default)]
 pub struct RunOptions<'a> {
     pub tee_label: Option<&'a str>,
     pub filter_stdout_only: bool,
@@ -41,6 +40,22 @@ pub struct RunOptions<'a> {
     /// can read from a pipe (e.g. `cat file | rtk wc`); without it the child
     /// gets an empty stdin and reports zero.
     pub inherit_stdin: bool,
+    pub profile: &'a str,
+    pub output_mode: crate::diagnostics::OutputMode,
+}
+
+impl Default for RunOptions<'_> {
+    fn default() -> Self {
+        Self {
+            tee_label: None,
+            filter_stdout_only: false,
+            skip_filter_on_failure: false,
+            no_trailing_newline: false,
+            inherit_stdin: false,
+            profile: crate::product::DEFAULT_PROFILE,
+            output_mode: crate::diagnostics::OutputMode::Balanced,
+        }
+    }
 }
 
 impl<'a> RunOptions<'a> {
@@ -89,7 +104,11 @@ pub enum RunMode<'a> {
     Passthrough,
 }
 
-fn start_durable_run(cmd_label: &str) -> Option<ActiveRun> {
+fn start_durable_run(
+    cmd_label: &str,
+    profile: &str,
+    output_mode: crate::diagnostics::OutputMode,
+) -> Option<ActiveRun> {
     let store = match RunStore::default_store() {
         Ok(store) => store,
         Err(error) => {
@@ -107,8 +126,8 @@ fn start_durable_run(cmd_label: &str) -> Option<ActiveRun> {
     match store.start(RunStart {
         command: cmd_label.to_string(),
         cwd,
-        profile: crate::product::DEFAULT_PROFILE.to_string(),
-        output_mode: "balanced".to_string(),
+        profile: profile.to_string(),
+        output_mode: format!("{output_mode:?}").to_ascii_lowercase(),
     }) {
         Ok(run) => Some(run),
         Err(error) => {
@@ -122,8 +141,10 @@ fn capture_durably(
     cmd: &mut Command,
     cmd_label: &str,
     inherit_stdin: bool,
+    profile: &str,
+    output_mode: crate::diagnostics::OutputMode,
 ) -> Result<Option<(ActiveRun, ProcessOutcome, String, String)>> {
-    let Some(mut run) = start_durable_run(cmd_label) else {
+    let Some(mut run) = start_durable_run(cmd_label, profile, output_mode) else {
         return Ok(None);
     };
     let outcome = run.capture_command(cmd, inherit_stdin)?;
@@ -173,7 +194,20 @@ fn finalize_durable_artifacts(
         return;
     };
     match run.finalize(outcome, diagnostics_json, summary, details) {
-        Ok(stored) => crate::core::run_analytics::record_silent(&stored.metadata),
+        Ok(stored) => {
+            crate::core::run_analytics::record_silent(&stored.metadata);
+            let retain_success =
+                std::env::var("CONTEXTDROID_RETAIN_SUCCESSES").as_deref() == Ok("1");
+            if stored.metadata.exit_code == Some(0) && !retain_success {
+                if let Ok(store) = RunStore::default_store() {
+                    if let Err(error) = store.remove(&stored.metadata.run_id) {
+                        eprintln!(
+                            "[contextdroid] failed to remove successful raw staging: {error:#}"
+                        );
+                    }
+                }
+            }
+        }
         Err(error) => eprintln!("[contextdroid] failed to finalize raw recovery: {error:#}"),
     }
     if let Ok(store) = RunStore::default_store() {
@@ -193,11 +227,15 @@ pub fn run_diagnostic<F>(
 where
     F: Fn(&str, i32, &str) -> crate::diagnostics::DiagnosticRun,
 {
-    let timer = tracking::TimedExecution::start();
     let cmd_label = format!("{} {}", tool_name, args_display);
-    let Some((run, outcome, raw_stdout, raw_stderr)) =
-        capture_durably(&mut cmd, &cmd_label, opts.inherit_stdin)
-            .with_context(|| format!("Failed to run {}", tool_name))?
+    let Some((run, outcome, raw_stdout, raw_stderr)) = capture_durably(
+        &mut cmd,
+        &cmd_label,
+        opts.inherit_stdin,
+        opts.profile,
+        opts.output_mode,
+    )
+    .with_context(|| format!("Failed to run {}", tool_name))?
     else {
         let stdin_mode = if opts.inherit_stdin {
             StdinMode::Inherit
@@ -219,7 +257,6 @@ where
         crate::diagnostics::ParseConfidence::Medium => "medium",
         crate::diagnostics::ParseConfidence::Low => "low",
     };
-    let raw_fallback = diagnostic.confidence == crate::diagnostics::ParseConfidence::Low;
     let parser_name = diagnostic.parser.name.clone();
     let mut diagnostics = serde_json::to_value(&diagnostic)?;
     if let Some(object) = diagnostics.as_object_mut() {
@@ -228,11 +265,13 @@ where
     let diagnostics_json = serde_json::to_string_pretty(&diagnostics)?;
     let omission_preserved = diagnostic.omissions.preserved.values().sum::<usize>() as u64;
     let omission_collapsed = diagnostic.omissions.collapsed.values().sum::<usize>() as u64;
-    let shown = crate::diagnostics::render(
-        &diagnostic,
-        &raw,
-        crate::diagnostics::OutputMode::Balanced,
-        5,
+    let rendered = crate::diagnostics::render_checked(&diagnostic, &raw, opts.output_mode, 5);
+    let shown = rendered.output;
+    let raw_fallback = rendered.decision != crate::diagnostics::NeverWorseDecision::Semantic;
+    let never_worse_fallback = matches!(
+        rendered.decision,
+        crate::diagnostics::NeverWorseDecision::RawIncompleteEvidence
+            | crate::diagnostics::NeverWorseDecision::RawNotSmaller
     );
     finalize_durable_artifacts(
         Some(run),
@@ -243,6 +282,7 @@ where
             parser: Some(parser_name),
             confidence: confidence.to_string(),
             raw_fallback,
+            never_worse_fallback,
             parser_error: false,
             omission_preserved,
             omission_collapsed,
@@ -256,12 +296,6 @@ where
     } else {
         print!("{}", shown);
     }
-    timer.track(
-        &cmd_label,
-        &format!("contextdroid {}", cmd_label),
-        &raw,
-        &shown,
-    );
     Ok(exit_code)
 }
 
@@ -276,8 +310,14 @@ fn run_captured_filter<F>(
 where
     F: Fn(&str, i32) -> String,
 {
-    let durable = capture_durably(&mut cmd, cmd_label, opts.inherit_stdin)
-        .with_context(|| format!("Failed to run {}", tool_name))?;
+    let durable = capture_durably(
+        &mut cmd,
+        cmd_label,
+        opts.inherit_stdin,
+        opts.profile,
+        opts.output_mode,
+    )
+    .with_context(|| format!("Failed to run {}", tool_name))?;
     let (durable_run, outcome, raw_stdout, raw_stderr) = match durable {
         Some((run, outcome, stdout, stderr)) => (Some(run), outcome, stdout, stderr),
         None => {
@@ -300,6 +340,7 @@ where
     let raw = format!("{}{}", raw_stdout, raw_stderr);
 
     if opts.skip_filter_on_failure && exit_code != 0 {
+        let has_durable_run = durable_run.is_some();
         if !raw_stdout.trim().is_empty() {
             print!("{}", raw_stdout);
         }
@@ -307,12 +348,14 @@ where
             eprint!("{}", raw_stderr);
         }
         finalize_durable(durable_run, outcome, &raw, true);
-        timer.track(
-            cmd_label,
-            &format!("contextdroid {}", cmd_label),
-            &raw,
-            &raw,
-        );
+        if !has_durable_run {
+            timer.track(
+                cmd_label,
+                &format!("contextdroid {}", cmd_label),
+                &raw,
+                &raw,
+            );
+        }
         return Ok(exit_code);
     }
 
@@ -330,11 +373,10 @@ where
     };
 
     let shown = if durable_run.is_some() {
-        emit_guarded(
-            &filtered,
-            recovery_hint(durable_run.as_ref()).as_deref(),
-            raw_for_tracking,
-        )
+        let hint = (exit_code != 0)
+            .then(|| recovery_hint(durable_run.as_ref()))
+            .flatten();
+        emit_guarded(&filtered, hint.as_deref(), raw_for_tracking)
     } else if let Some(label) = opts.tee_label {
         print_with_hint(&filtered, &raw, raw_for_tracking, label, exit_code)
     } else {
@@ -347,12 +389,14 @@ where
         guarded
     };
 
-    timer.track(
-        cmd_label,
-        &format!("contextdroid {}", cmd_label),
-        raw_for_tracking,
-        &shown,
-    );
+    if durable_run.is_none() {
+        timer.track(
+            cmd_label,
+            &format!("contextdroid {}", cmd_label),
+            raw_for_tracking,
+            &shown,
+        );
+    }
     finalize_durable(durable_run, outcome, &shown, false);
     Ok(exit_code)
 }
@@ -386,7 +430,7 @@ pub fn run(
         ),
         RunMode::Streamed(filter) => {
             if let Some((run, outcome, raw_stdout, raw_stderr)) =
-                capture_durably(&mut cmd, &cmd_label, false)
+                capture_durably(&mut cmd, &cmd_label, false, opts.profile, opts.output_mode)
                     .with_context(|| format!("Failed to run {}", tool_name))?
             {
                 let exit_code = outcome.shell_exit_code();
@@ -402,14 +446,11 @@ pub fn run(
                 if let Some(post) = filter.on_exit(exit_code, &raw) {
                     filtered.push_str(&post);
                 }
-                let shown = emit_guarded(&filtered, recovery_hint(Some(&run)).as_deref(), &raw);
+                let hint = (exit_code != 0)
+                    .then(|| recovery_hint(Some(&run)))
+                    .flatten();
+                let shown = emit_guarded(&filtered, hint.as_deref(), &raw);
                 finalize_durable(Some(run), outcome, &shown, false);
-                timer.track(
-                    &cmd_label,
-                    &format!("contextdroid {}", cmd_label),
-                    &raw,
-                    &shown,
-                );
                 return Ok(exit_code);
             }
 

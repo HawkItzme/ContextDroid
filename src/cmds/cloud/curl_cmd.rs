@@ -117,7 +117,7 @@ fn filter_curl_output(raw: &str, is_tty: bool) -> FilterResult<'_> {
     // Critically, do NOT call `force_tee_hint` on this path — it has a side effect
     // (writes the raw body to a tee log file) and we don't need a recovery file
     // when the consumer already receives the full body.
-    if !is_tty || looks_like_json || trimmed.len() < MAX_RESPONSE_SIZE {
+    if !is_tty || looks_like_json || trimmed.len() <= MAX_RESPONSE_SIZE {
         return FilterResult {
             content: Cow::Borrowed(trimmed),
             tee_hint: None,
@@ -178,7 +178,7 @@ mod tests {
     #[test]
     fn test_filter_curl_long_output_passes_through_without_loss() {
         let long: String = "x".repeat(1000);
-        let result = filter_curl_output(&long, true);
+        let result = filter_curl_output(&long, false);
         assert_eq!(&*result.content, long);
         assert!(result.tee_hint.is_none());
     }
@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn test_filter_curl_multibyte_boundary_passes_through_exactly() {
         let content = "a".repeat(499) + "é";
-        let result = filter_curl_output(&content, true);
+        let result = filter_curl_output(&content, false);
         assert_eq!(&*result.content, content);
     }
 

@@ -401,3 +401,259 @@ integrations/migration; documentation/benchmarks/packaging. Do not stage pre-exi
   validation blockers, optional Homebrew distribution work, and explicit publication approval.
   Homebrew is not required for a direct-archive alpha; publishing approval is an authorization
   gate rather than a technical blocker.
+
+## Stabilization phase — approved 2026-07-15
+
+### Scope and branch
+
+- Branch: `fix/contextdroid-v0.1-stabilization`, created from
+  `product/contextdroid-v0.1` at `3f27260f75dddafe56f4e7c53ea808470e6c0ceb`.
+- Upstream remains RTK `v0.43.0` at
+  `5a7880d404db8364d602f2ecdc41dd790f64013f`; upstream is reference/heritage only
+  and is not a build or runtime dependency.
+- Do not merge `develop`, publish, tag, push, change global user configuration, or use
+  destructive Git operations. Repository verification output stays raw.
+- Preserve the working Linux Claude Code integration and compact `git status` behavior
+  as blocking regressions.
+
+### Approved decisions
+
+- Analytics has one local canonical recorder and store for Android and inherited general
+  commands. Legacy rows are sanitized/imported without double counting; old tables become
+  read-only compatibility inputs.
+- Canonical time is UTC epoch milliseconds. Lower bounds are inclusive and equivalent
+  durations select identical rows. `--daily`, `--weekly`, and `--monthly` are rolling 24-hour,
+  7-day, and 30-day windows.
+- `--last` is applied after every other filter and is validated in `1..=1000`.
+- Logcat semantic support is a bounded snapshot. Stabilization stream mode is direct
+  pass-through with native cancellation and no internal semantic buffer.
+- Integration installation fails closed when recognized RTK hooks exist. Only
+  `migrate rtk --apply` owns backed-up, atomic RTK-hook replacement.
+- Output mode precedence is CLI, `CONTEXTDROID_OUTPUT_MODE`, config, then balanced.
+- Raw capture uses secure staging before parsing. Completed successful artifacts are deleted
+  by default; failure retention defaults to 7 days/200 runs/1 GiB, while Logcat failure
+  retention defaults to 24 hours/50 runs/256 MiB.
+
+### Stabilization milestones
+
+- [x] S0 — Baseline and red canonical-analytics contract. Add an isolated database test that
+  records one general and one Android execution and demonstrates that bare gain, rolling
+  filters, and scopes currently disagree or duplicate. Re-establish all raw gates.
+- [x] S1 — Canonical analytics schema and migration. Add validated duration/count newtypes,
+  `ExecutionRecord`/builder/recorder/query, schema v2, migration checkpoints, deterministic
+  ordering, privacy-safe project/session IDs, and idempotent imports from `contextdroid_runs`,
+  `commands`, and `legacy_rtk_commands`. Stop all legacy writes and deduplicate the Android
+  durable/tracker pair.
+- [x] S2 — Canonical analytics CLI. Make gain/session/quality share the v2 store. Implement
+  orthogonal scope/command/project/profile/parser filters, typed `m/h/d/w` durations,
+  rolling presets, post-filter `--last`, all/history compatibility, stable text/JSON/CSV,
+  and measured-versus-unknown quality sections.
+- [x] S3 — Runtime context, frame ownership, and output modes. Resolve profile/output/config
+  once, propagate Android ownership into every parser, preserve unknown source-looking frames,
+  positively classify third-party frames, and force verbose Gradle requests to lossless/raw.
+- [x] S4 — Never-worse rendering and measured execution evidence. Validate semantic evidence
+  before size comparison, replay raw whenever semantic output is incomplete or not smaller,
+  record the decision/reason and exact emitted metrics, and stop fabricating exit-parity or
+  fixture-preservation success.
+- [x] S5 — Bounded Logcat snapshot and incident state machine. Add `snapshot`/`stream`, keep
+  the old flat form as a deprecated snapshot alias, execute snapshots with a finite time/line
+  bound, segment all incidents, filter each incident independently, preserve crash/ANR/native
+  evidence, and keep stream zero-buffer pass-through.
+- [x] S6 — Shared Android command classification and rewrite safety. Parse every Gradle task
+  and option value, treat `clean` as neutral only alongside verified tasks, fail closed on an
+  unknown task, align supported ADB auto-rewrites, and replace only a true executable `rtk`
+  token in compatibility mode without touching quoted data or paths.
+- [x] S7 — Integration conflict migration. Add RTK-hook conflict status/preview, fail-closed
+  install, retained user-only backups, atomic recognized-entry replacement in explicit RTK
+  migration, and temporary-HOME lifecycle tests. Preserve unrelated JSON and the Linux Claude
+  compact `git status` smoke behavior.
+- [x] S8 — Fixture preservation contracts. Replace existence checks with a data-driven
+  manifest that exercises parser, structured assertions, renderer, secure run store, raw
+  recovery, exit parity, malformed fallback, confidence, omissions, and every required
+  Android/ADB/Logcat diagnostic family.
+- [x] S9 — Privacy and secure storage. Add user-only/no-follow atomic filesystem operations,
+  reject symlink/reparse/traversal and raw stores inside source repositories, bound parser
+  memory without truncating durable raw capture, enforce failure-only retention, and add
+  `privacy status`, analytics export/reset, runs list/purge, and guarded data purge.
+- [x] S10 — CI and real smoke coverage. Add `develop` PR coverage; deterministic docs/help
+  validation; required raw fmt, clippy, test, and release-build jobs on Linux/Windows/macOS;
+  a pinned AGP 9.3/Gradle 9.5/JDK 17/API 37 sample; bounded fake-ADB Logcat smoke; and Linux
+  temporary-HOME Claude lifecycle plus exact compact `git status` smoke.
+- [x] S11 — Documentation and merge-readiness audit. Update README, architecture, safety,
+  filter matrix, benchmarks, integrations, release checklist, product spec, changelog,
+  `CLAUDE.md`, and new `docs/MIGRATION.md`; remove unsupported RTK-facing claims; run every
+  raw gate and document remaining platform/device limitations.
+
+### Canonical analytics design
+
+- Schema version 2 uses `contextdroid_executions` with an autoincrement execution ID,
+  stable unique import key/origin, UTC `started_at_ms`, privacy-safe session/project IDs,
+  scope, command family, operation, parser, profile, output mode, execution source,
+  raw/returned bytes/lines/token estimates, duration, exit/signal, confidence, fallback,
+  parser/recovery/rerun signals, optional run ID, and non-sensitive omission JSON.
+- Full commands, arguments, paths, package names, device serials, file/error text, and Logcat
+  contents are not stored in analytics. Per-install salt protects project/session hashing.
+- `analytics_migrations` stores import/checkpoint state separately from resettable analytics.
+  Import keys are `run-v1:<run_id>`, `legacy-local:<id>`, and `legacy-rtk:<id>`.
+- Android v1/legacy duplicates match on sanitized family/operation/project/metrics and a
+  completion-time tolerance of five seconds. Stable keys and high-water rescans make imports
+  idempotent while compatibility tables exist.
+- Query order is `started_at_ms DESC, execution_id DESC`; filters run before limiting.
+  Bare gain is all-time/all-scope. History aliases `--last 20`. Presets conflict with each
+  other and `--since`; `--all` conflicts with time filters.
+- Session groups canonical opaque session IDs and reports unattributed executions separately.
+  Quality reports observed confidence/fallback/parser/recovery/never-worse metrics and labels
+  exit-parity/fixture status unknown unless versioned test evidence exists.
+
+### Safety architecture
+
+- Use validated newtypes for durations/counts/identifiers, builders for execution records,
+  RAII for secure staging and cleanup, and an explicit state machine for Logcat incidents.
+- Use `std::process::Command` argument arrays only; never execute reconstructed shell strings.
+  Add injection tests for metacharacters, substitutions, quotes, newlines, malformed/binary
+  output, oversized input, traversal, symlink, and Windows reparse cases.
+- Snapshot Logcat defaults to a rolling 10-minute dump and a 20,000-line cap. Semantic
+  snapshots reject binary/file/rotation/clear/unbounded flags. Automatic `adb logcat` maps to
+  snapshot. Streaming analytics store only observable completion metadata and unknown sizes.
+- A shared classifier covers verified Gradle tasks and safe ADB text commands. All tasks must
+  be verified; `clean` alone and unknown custom tasks pass through. ADB auto-rewrite is limited
+  to devices, install/install-multiple/uninstall, selected `am` actions, selected `pm` queries,
+  narrowed activity/package/meminfo dumpsys, and Logcat snapshot.
+- Secure storage uses 0700 directories/0600 files plus no-follow/create-new/fsync/atomic rename
+  on Unix and explicit reparse-point rejection/current-user-only access on Windows.
+
+### Per-milestone evidence and commit boundaries
+
+- Every production change follows Red-Green-Refactor: capture the focused failing test, make
+  only that contract green, then run the relevant module/integration suite and raw fmt/clippy.
+- Reviewable commit subjects after green gates:
+  `test(stabilization): characterize analytics and safety gaps`,
+  `fix(analytics): unify general and Android execution records`,
+  `fix(android): preserve application frames and propagate output mode`,
+  `fix(runner): enforce semantic never-worse guarantees`,
+  `fix(logcat): add bounded snapshots and incident segmentation`,
+  `fix(rewrite): align Android routing and compatibility rewriting`,
+  `fix(integrations): detect and migrate RTK hooks safely`,
+  `test(android): enforce parser preservation contracts`,
+  `fix(privacy): harden analytics and raw run storage`,
+  `ci: add develop gates and Android/Linux smoke coverage`, and
+  `docs: align product behavior and release evidence`.
+- Each milestone records changed files, behavior, tests/fixtures, raw commands, safety/fallback,
+  compatibility, docs, discoveries/deviations, and remaining risk in this file before moving on.
+
+### Stabilization verification log
+
+- 2026-07-15: Clean baseline confirmed at `3f27260`; branch created. Prior planning-turn fresh
+  evidence was `cargo fmt --all --check` green. The earlier alpha record reports all raw gates
+  green, but S0 must independently re-establish them for this branch.
+
+### Stabilization risks at phase start (resolved or superseded below)
+
+- The current v1 durable table and inherited `commands` table share `analytics.db`; Android
+  diagnostic execution writes both, while general inherited filters primarily write the
+  legacy table. Current gain flags route between incompatible readers.
+- Current Logcat semantic execution can be unbounded and its parser selects only one loosely
+  matched incident. Current Android ownership configuration is not propagated to Gradle stack
+  collapse, causing application frames to be classified as removable third-party frames.
+- Current raw run store retains every optimized success, writes predictable files without the
+  full no-follow/user-only contract, and stores full commands/paths in local metadata/analytics.
+- Real Android SDK/device and Linux Claude evidence are absent on this Windows host until S10
+  runs in CI or an equivalent Linux/Android environment.
+
+### Exact first implementation task
+
+Add a temp-database integration contract that records one inherited general Git execution and
+one Android diagnostic execution, then asserts bare gain, rolling weekly gain, and Android/general
+scopes all read the same source and return exactly two non-duplicated executions. Run it raw and
+record the expected failure before changing production analytics.
+
+### Stabilization completion record — 2026-07-16
+
+All S0-S11 implementation milestones are complete on
+`fix/contextdroid-v0.1-stabilization`. No commit, merge, push, tag, release, global user
+configuration change, or destructive repository operation was performed.
+
+#### Milestone evidence
+
+- S0 captured the split-store failure: the red canonical contract observed one execution
+  through one reader and two through the combined expectation. The same contract is green.
+- S1-S2 added schema-v2 `contextdroid_executions`, OS-random install salt, salted project IDs,
+  deterministic UTC ordering, idempotent legacy imports, completion-time Android deduplication,
+  canonical `gain`/`session`/`quality`, rolling presets, typed `m/h/d/w`, orthogonal filters,
+  post-filter `--last`, history, graph, and text/JSON/CSV output. Pass-through sizes are unknown,
+  not fabricated zeroes. Windows project paths are normalized before hashing.
+- S3-S4 propagate runtime profile/output/Android ownership, preserve unknown source-looking
+  frames, positively classify collapsible frames, honor verbose Gradle raw behavior, and apply
+  the never-worse evidence/size guard before semantic output. Quality no longer claims unmeasured
+  exit parity or fixture success.
+- S5-S6 add bounded 10-minute/20,000-line Logcat snapshots, zero-buffer pass-through streams,
+  independent multi-incident parsing, package/PID-safe filtering, shared Gradle/ADB classification,
+  fail-closed unknown tasks, and token-aware RTK executable migration. Automatic Logcat rewriting
+  accepts only plain `adb logcat`; custom/dump forms stay unchanged.
+- S7 adds fail-closed recognized RTK hook conflicts and explicit backed-up migration while
+  preserving unrelated integration JSON. Temporary-root lifecycle tests and smoke pass.
+- S8 replaces existence-only fixtures with a 30-entry synthetic contract covering every required
+  Android family from parsing through semantic assertions, rendering, durable finalization, and
+  byte-exact raw recovery.
+- S9 adds no-follow/reparse/traversal defenses, private Unix modes, secure staged replacement,
+  failure-only default run retention, repository-root rejection, storage lifecycle commands,
+  privacy status, and canonical analytics export/reset. Analytics has no network client.
+- S10 adds the three-OS test/release matrix, deterministic docs/help gate, pinned AGP 9.3 /
+  Gradle 9.5 / JDK 17 / API 37 sample, Android failure smoke, and Linux temporary-home Claude plus
+  compact Git-status smoke. The inherited secret-backed AI review is disabled.
+- S11 updates README, architecture, safety, filter matrix, benchmarks, integrations, migration,
+  release checklist, product spec, changelog, and contributor instructions.
+
+#### Final raw verification
+
+- `cargo fmt --all --check`: green.
+- `cargo test --all`: green; main suite 2,281 passed, 0 failed, 8 ignored; fixture manifest 1/1;
+  guard integration 6/6; all other applicable integration targets green.
+- `cargo clippy --all-targets --all-features -- -D warnings`: green.
+- `cargo build --release`: green in 3m34s after the final source change.
+- `git diff --check`: green. Source scan found no analytics/network client. `getrandom 0.4.2`
+  was already present through `tempfile` and is now a direct dependency for the privacy salt.
+- Documentation contract: green through an equivalent raw PowerShell check. The Bash script could
+  not run through the Windows `bash` alias because this host has WSL enabled without an installed
+  distribution; Git Bash subsequently ran the real script successfully and validated all smoke
+  script syntax, including the bounded fake-ADB fixture.
+- Release help: green for `--profile`, post-filter `--last`, rolling daily, bounded snapshot,
+  pass-through stream, and typed `--since` surfaces.
+
+#### Smoke results
+
+- Windows isolated Claude lifecycle: preview/install/status/uninstall green with no global writes.
+- Windows isolated compact Git status: green and preserved exact ` M tracked.txt` status evidence.
+- Windows isolated canonical analytics: green for bare/general Git recording, project/profile/time
+  filters, post-filter last, daily/weekly/monthly, graph, quality, and session from one database.
+- Linux Claude script and real Android AGP sample are implemented as required CI jobs but were not
+  executable locally. This Windows host has neither a WSL distribution nor the required Android
+  SDK/Gradle environment; CI results are therefore still pending.
+
+#### Decisions, deviations, and compatibility
+
+- To provide the required `gain --profile` and `quality --profile` filters without a Clap name
+  collision, the rewrite profile remains `contextdroid --profile <PROFILE> <COMMAND>` and must
+  precede the subcommand; analytics owns `--profile` after `gain`/`quality`.
+- Production execution writes only the canonical recorder. A `cfg(test)` legacy tracker write
+  remains solely to keep inherited tracker unit contracts isolated; it cannot affect production.
+- Successful diagnostic runs securely stage raw output and then delete it after analytics unless
+  `CONTEXTDROID_RETAIN_SUCCESSES=1`; failed runs retain exact recovery artifacts.
+- Windows secure storage rejects reparse points and inherits the current user's protected local
+  data-directory ACL. Explicit DACL replacement was not added because it can corrupt managed or
+  enterprise inheritance; this remains a pre-stable hardening item.
+
+#### Remaining risks
+
+- New Linux/macOS/Android/Claude CI jobs have not run for this unpushed branch. Merge readiness is
+  conditional on their green results, including `cargo audit` and Semgrep; `cargo-audit` is not
+  installed on this host.
+- Live devices, OEM Logcat variants, instrumentation tests, and cancellation under real ADB still
+  need device-lab evidence. The sample currently covers Gradle success, Kotlin, AAPT, and unit-test
+  failures in CI.
+- Canonical session grouping supports opaque session IDs, but direct and current integration paths
+  are reported as `unattributed` until agent-provided session identity is wired through execution.
+- Windows current-user DACL assertion, kill-during-finalize stress, and broader legally
+  redistributable real-world Android fixtures remain pre-stable hardening work.
+- The branch is intentionally uncommitted. Review and CI must precede merging; publication remains
+  separately gated by explicit approval.

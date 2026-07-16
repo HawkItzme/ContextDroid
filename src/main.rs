@@ -94,8 +94,12 @@ struct Cli {
     skip_env: bool,
 
     /// Automatic rewrite profile used by hook/check operations
-    #[arg(long, global = true, value_enum, default_value = "contextdroid-safe")]
+    #[arg(long, value_enum, default_value = "contextdroid-safe")]
     profile: discover::registry::RewriteProfile,
+
+    /// Diagnostic output mode (CLI overrides environment and config)
+    #[arg(long, global = true, value_enum)]
+    output_mode: Option<diagnostics::OutputMode>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -436,9 +440,18 @@ enum Commands {
         /// Filter by command family, for example gradle
         #[arg(long = "command")]
         command_family: Option<String>,
-        /// Limit to recent days, for example 7d
+        /// Filter by execution profile
+        #[arg(long = "profile", value_name = "PROFILE")]
+        analytics_profile: Option<String>,
+        /// Filter by parser identity
+        #[arg(long)]
+        parser: Option<String>,
+        /// Limit to a typed rolling duration, for example 10m, 2h, 1d, or 2w
         #[arg(long)]
         since: Option<String>,
+        /// Return the most recent matching executions after all filters
+        #[arg(long, conflicts_with = "history")]
+        last: Option<usize>,
         /// Show ASCII graph of daily savings
         #[arg(short, long)]
         graph: bool,
@@ -451,16 +464,16 @@ enum Commands {
         /// Subscription tier for quota calculation: pro, 5x, 20x
         #[arg(short, long, default_value = "20x", requires = "quota")]
         tier: String,
-        /// Show detailed daily breakdown (all days)
+        /// Filter to the rolling last 24 hours
         #[arg(short, long)]
         daily: bool,
-        /// Show weekly breakdown
+        /// Filter to the rolling last 7 days
         #[arg(short, long)]
         weekly: bool,
-        /// Show monthly breakdown
+        /// Filter to the rolling last 30 days
         #[arg(short, long)]
         monthly: bool,
-        /// Show all time breakdowns (daily + weekly + monthly)
+        /// Use all canonical history (also the default)
         #[arg(short, long)]
         all: bool,
         /// Output format: text, json, csv
@@ -646,9 +659,18 @@ enum Commands {
         /// Filter by command family, for example gradle
         #[arg(long = "command")]
         command_family: Option<String>,
-        /// Limit to recent days, for example 7d
+        /// Filter by execution profile
+        #[arg(long = "profile", value_name = "PROFILE")]
+        analytics_profile: Option<String>,
+        /// Filter by parser identity
+        #[arg(long)]
+        parser: Option<String>,
+        /// Limit to a typed rolling duration, for example 10m, 2h, 1d, or 2w
         #[arg(long)]
         since: Option<String>,
+        /// Return the most recent matching executions after all filters
+        #[arg(long)]
+        last: Option<usize>,
         /// Output format: text or json
         #[arg(short, long, default_value = "text")]
         format: String,
@@ -658,6 +680,24 @@ enum Commands {
     Runs {
         #[command(subcommand)]
         command: RunsCommands,
+    },
+
+    /// Export or reset the canonical local analytics store
+    Analytics {
+        #[command(subcommand)]
+        command: AnalyticsCommands,
+    },
+
+    /// Inspect ContextDroid privacy and local-data behavior
+    Privacy {
+        #[command(subcommand)]
+        command: PrivacyCommands,
+    },
+
+    /// Purge ContextDroid local data with explicit confirmation
+    Data {
+        #[command(subcommand)]
+        command: DataCommands,
     },
 
     /// Preview, install, inspect, or uninstall an agent integration
@@ -839,6 +879,9 @@ enum Commands {
 
     /// Android Logcat incident extraction with raw recovery
     Logcat {
+        /// Bounded semantic snapshot (default) or zero-buffer pass-through stream
+        #[arg(value_enum, default_value = "snapshot")]
+        action: cmds::android::logcat::LogcatAction,
         /// Incident family to retain
         #[arg(long, value_enum, default_value = "all")]
         mode: cmds::android::logcat::LogcatMode,
@@ -848,7 +891,7 @@ enum Commands {
         /// Ask adb to filter to this PID
         #[arg(long)]
         pid: Option<u32>,
-        /// Pass a start time to `adb logcat -T`
+        /// Snapshot rolling window such as 10m, 2h, 1d, or 2w
         #[arg(long)]
         since: Option<String>,
         /// Remaining raw adb logcat arguments
@@ -916,6 +959,8 @@ enum HookCommands {
 
 #[derive(Debug, Subcommand)]
 enum RunsCommands {
+    /// List retained failed-run artifacts
+    List,
     /// Delete runs outside configured retention bounds
     Prune {
         /// Maximum run age in days
@@ -927,6 +972,42 @@ enum RunsCommands {
         /// Maximum retained bytes across all runs
         #[arg(long, default_value = "1073741824")]
         max_bytes: u64,
+    },
+    /// Delete every retained run artifact
+    Purge {
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum AnalyticsCommands {
+    /// Export canonical execution records
+    Export {
+        #[arg(long, default_value = "json")]
+        format: String,
+    },
+    /// Delete canonical execution records while preserving migration checkpoints
+    Reset {
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum PrivacyCommands {
+    /// Show local storage, retention, and network-telemetry status
+    Status,
+}
+
+#[derive(Debug, Subcommand)]
+enum DataCommands {
+    /// Delete analytics and raw runs; config is preserved unless explicitly included
+    Purge {
+        #[arg(long)]
+        yes: bool,
+        #[arg(long)]
+        include_config: bool,
     },
 }
 
@@ -1343,6 +1424,9 @@ const RTK_META_COMMANDS: &[&str] = &[
     "session",
     "show",
     "runs",
+    "analytics",
+    "privacy",
+    "data",
     "integrations",
     "migrate",
     "rewrite",
@@ -1630,6 +1714,24 @@ where
     }
 }
 
+fn canonical_project_filter(project: Option<String>) -> Result<Option<String>> {
+    project
+        .map(|value| {
+            let path = if value == "." {
+                std::env::current_dir()?
+            } else {
+                PathBuf::from(value)
+            };
+            Ok::<_, anyhow::Error>(
+                path.canonicalize()
+                    .unwrap_or(path)
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+        })
+        .transpose()
+}
+
 fn run_cli() -> Result<i32> {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
@@ -1655,6 +1757,8 @@ fn run_cli() -> Result<i32> {
     }
 
     let profile = cli.profile;
+    let runtime_context =
+        core::runtime::RuntimeContext::resolve(profile.as_str(), cli.output_mode)?;
     let code = match cli.command {
         Commands::Ls { args } => ls::run(&args, cli.verbose)?,
 
@@ -2064,7 +2168,10 @@ fn run_cli() -> Result<i32> {
             project, // added
             scope,
             command_family,
+            analytics_profile,
+            parser,
             since,
+            last,
             graph,
             history,
             quota,
@@ -2078,27 +2185,55 @@ fn run_cli() -> Result<i32> {
             reset,
             yes,
         } => {
-            let use_legacy_view =
-                quota || weekly || monthly || failures || reset || format == "csv";
-            if use_legacy_view {
-                analytics::gain::run(
-                    project.is_some(),
-                    graph,
-                    history,
-                    quota,
-                    &tier,
-                    daily,
-                    weekly,
-                    monthly,
-                    all,
-                    &format,
-                    failures,
-                    reset,
-                    yes,
-                    cli.verbose,
-                )?;
+            let selected_windows = usize::from(daily)
+                + usize::from(weekly)
+                + usize::from(monthly)
+                + usize::from(since.is_some());
+            if selected_windows > 1 {
+                anyhow::bail!("--daily, --weekly, --monthly, and --since are mutually exclusive");
+            }
+            if all && selected_windows > 0 {
+                anyhow::bail!("--all conflicts with time filters");
+            }
+            if quota || failures {
+                anyhow::bail!("--quota and --failures are not available in canonical analytics; use `contextdroid gain` and `contextdroid quality`");
+            }
+            if reset {
+                if !yes {
+                    anyhow::bail!("analytics reset requires --yes");
+                }
+                core::run_analytics::RunAnalytics::open_default()?.reset()?;
+                println!("ContextDroid canonical analytics reset.");
+                return Ok(0);
+            }
+            let project = canonical_project_filter(project)?;
+            let duration = if daily {
+                Some(core::time_window::PositiveDuration::DAY)
+            } else if weekly {
+                Some(core::time_window::PositiveDuration::WEEK)
+            } else if monthly {
+                Some(core::time_window::PositiveDuration::MONTH)
             } else {
-                core::run_analytics::run_gain_cli(scope, command_family, project, since, &format)?;
+                since.as_deref().map(core::run_analytics::parse_since).transpose()?
+            };
+            let last = if history { Some(20) } else { last };
+            let query = core::run_analytics::RunQuery {
+                scope,
+                command_family,
+                project,
+                profile: analytics_profile,
+                parser,
+                since: duration,
+                last: last.map(core::time_window::LastCount::new).transpose()?,
+                ..Default::default()
+            };
+            if graph && format != "text" {
+                anyhow::bail!("--graph requires --format text");
+            }
+            let _ = tier;
+            core::run_analytics::run_gain_cli(query.clone(), &format)?;
+            if graph {
+                core::run_analytics::run_graph_cli(&query)?;
             }
             0
         }
@@ -2107,10 +2242,23 @@ fn run_cli() -> Result<i32> {
             project,
             scope,
             command_family,
+            analytics_profile,
+            parser,
             since,
+            last,
             format,
         } => {
-            core::run_analytics::run_quality_cli(scope, command_family, project, since, &format)?;
+            let query = core::run_analytics::RunQuery {
+                scope,
+                command_family,
+                project: canonical_project_filter(project)?,
+                profile: analytics_profile,
+                parser,
+                since: since.as_deref().map(core::run_analytics::parse_since).transpose()?,
+                last: last.map(core::time_window::LastCount::new).transpose()?,
+                ..Default::default()
+            };
+            core::run_analytics::run_quality_cli(query, &format)?;
             0
         }
 
@@ -2221,7 +2369,7 @@ fn run_cli() -> Result<i32> {
         }
 
         Commands::Session {} => {
-            analytics::session_cmd::run(cli.verbose)?;
+            core::run_analytics::run_session_cli()?;
             0
         }
 
@@ -2255,6 +2403,13 @@ fn run_cli() -> Result<i32> {
         }
 
         Commands::Runs { command } => match command {
+            RunsCommands::List => {
+                let store = core::run_store::RunStore::default_store()?;
+                for (id, bytes) in store.list()? {
+                    println!("{id}\t{bytes}");
+                }
+                0
+            }
             RunsCommands::Prune {
                 days,
                 max_runs,
@@ -2270,6 +2425,71 @@ fn run_cli() -> Result<i32> {
                     "Removed {} runs ({} bytes); kept {} runs ({} bytes)",
                     report.removed_runs, report.removed_bytes, report.kept_runs, report.kept_bytes
                 );
+                0
+            }
+            RunsCommands::Purge { yes } => {
+                if !yes {
+                    anyhow::bail!("runs purge requires --yes");
+                }
+                let count = core::run_store::RunStore::default_store()?.purge_all()?;
+                println!("Purged {count} retained runs.");
+                0
+            }
+        },
+
+        Commands::Analytics { command } => match command {
+            AnalyticsCommands::Export { format } => {
+                core::run_analytics::run_gain_cli(Default::default(), &format)?;
+                0
+            }
+            AnalyticsCommands::Reset { yes } => {
+                if !yes {
+                    anyhow::bail!("analytics reset requires --yes");
+                }
+                core::run_analytics::RunAnalytics::open_default()?.reset()?;
+                println!("ContextDroid canonical analytics reset.");
+                0
+            }
+        },
+
+        Commands::Privacy { command } => match command {
+            PrivacyCommands::Status => {
+                let analytics = core::run_analytics::analytics_db_path()?;
+                let runs = core::run_store::RunStore::default_store()?;
+                println!("Remote telemetry: disabled (no network analytics client)");
+                println!("Analytics: {}", analytics.display());
+                println!("Raw failures: {}", runs.root().display());
+                println!("Successful raw staging: deleted by default");
+                println!("Failure retention: 7 days, 200 runs, 1073741824 bytes");
+                0
+            }
+        },
+
+        Commands::Data { command } => match command {
+            DataCommands::Purge { yes, include_config } => {
+                if !yes {
+                    anyhow::bail!("data purge requires --yes");
+                }
+                let run_count = core::run_store::RunStore::default_store()?.purge_all()?;
+                let analytics = core::run_analytics::analytics_db_path()?;
+                for path in [
+                    analytics.clone(),
+                    analytics.with_extension("db-wal"),
+                    analytics.with_extension("db-shm"),
+                ] {
+                    if path.is_file() {
+                        std::fs::remove_file(path)?;
+                    }
+                }
+                if include_config {
+                    if let Some(config) = product::config_dir() {
+                        core::secure_fs::reject_reparse_components(&config)?;
+                        if config.is_dir() {
+                            std::fs::remove_dir_all(config)?;
+                        }
+                    }
+                }
+                println!("Purged analytics and {run_count} runs; integrations were preserved.");
                 0
             }
         },
@@ -2295,13 +2515,14 @@ fn run_cli() -> Result<i32> {
             match action {
                 integrations::Action::Preview => println!("{}", result.preview),
                 integrations::Action::Status => println!(
-                    "{}: {}",
+                    "{}: {} (recognized RTK conflicts: {})",
                     result.path.display(),
                     if result.installed {
                         "installed"
                     } else {
                         "not installed"
-                    }
+                    },
+                    result.rtk_conflicts,
                 ),
                 integrations::Action::Install | integrations::Action::Uninstall => println!(
                     "{}: {}",
@@ -2328,6 +2549,7 @@ fn run_cli() -> Result<i32> {
                     destination_dir: destination_dir
                         .unwrap_or(migration::default_destination_dir()?),
                     apply,
+                    claude_root: None,
                 })?;
                 println!("{}", serde_json::to_string_pretty(&report)?);
                 0
@@ -2445,23 +2667,28 @@ fn run_cli() -> Result<i32> {
 
         Commands::GolangciLint { args } => golangci_cmd::run(&args, cli.verbose)?,
 
-        Commands::Gradlew { args } => gradlew_cmd::run(&args, cli.verbose)?,
+        Commands::Gradlew { args } => gradlew_cmd::run(&args, cli.verbose, &runtime_context)?,
 
         Commands::Adb { args } => cmds::android::adb::run(&args, cli.verbose)?,
 
         Commands::Logcat {
+            action,
             mode,
             package,
             pid,
             since,
             args,
         } => cmds::android::logcat::run(
-            mode,
-            package.as_deref(),
-            pid,
-            since.as_deref(),
-            &args,
-            cli.verbose,
+            cmds::android::logcat::LogcatRequest {
+                action,
+                mode,
+                package: package.as_deref(),
+                pid,
+                since: since.as_deref(),
+                raw_args: &args,
+                verbose: cli.verbose,
+            },
+            &runtime_context,
         )?,
 
         Commands::Mvn { args } => mvn_cmd::run(&args, cli.verbose)?,

@@ -14,6 +14,10 @@ and recovery. Uninstall removes only that block.
 Preview and status do not write. Lifecycle tests use temporary roots. Actual global
 installation changes user configuration and must be initiated explicitly by the user.
 
+If a recognized RTK hook is present, install fails closed and status reports the conflict.
+Preview does not propose a coexisting hook. Use `contextdroid migrate rtk --apply` for the only
+supported backed-up replacement flow; see [MIGRATION.md](MIGRATION.md).
+
 Preview the exact managed change:
 
 ```text

@@ -1368,15 +1368,20 @@ impl TimedExecution {
     /// ```
     pub fn track(&self, original_cmd: &str, rtk_cmd: &str, input: &str, output: &str) {
         let elapsed_ms = self.start.elapsed().as_millis() as u64;
-        let input_tokens = estimate_tokens(input);
-        let output_tokens = estimate_tokens(output);
-
+        crate::core::run_analytics::record_compatibility_silent(
+            original_cmd,
+            rtk_cmd,
+            input,
+            output,
+            elapsed_ms,
+        );
+        #[cfg(test)]
         if let Ok(tracker) = Tracker::new() {
             let _ = tracker.record(
                 original_cmd,
                 rtk_cmd,
-                input_tokens,
-                output_tokens,
+                estimate_tokens(input),
+                estimate_tokens(output),
                 elapsed_ms,
             );
         }
@@ -1404,7 +1409,8 @@ impl TimedExecution {
     /// ```
     pub fn track_passthrough(&self, original_cmd: &str, rtk_cmd: &str) {
         let elapsed_ms = self.start.elapsed().as_millis() as u64;
-        // input_tokens=0, output_tokens=0 won't dilute savings statistics
+        crate::core::run_analytics::record_passthrough_silent(original_cmd, rtk_cmd, elapsed_ms);
+        #[cfg(test)]
         if let Ok(tracker) = Tracker::new() {
             let _ = tracker.record(original_cmd, rtk_cmd, 0, 0, elapsed_ms);
         }

@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    branches: [product/contextdroid-v0.1, master]
+    branches: [product/contextdroid-v0.1, develop, master]
 
 permissions:
   contents: read
@@ -198,7 +198,52 @@ jobs:
       - run: semgrep scan --config .semgrep.yml --baseline-commit ${{ github.event.pull_request.base.sha }} --error
 
   release-build:
-    name: release build
+    name: release build (${{ matrix.os }})
+    needs: clippy
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.91.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
+
+  docs-contract:
+    name: docs and help contract
+    needs: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.91.0
+      - run: bash scripts/validate-docs.sh
+      - run: cargo run --quiet -- --help > help.txt
+      - run: grep -q "Android Logcat" help.txt && grep -q "canonical local analytics" help.txt
+
+  android-smoke:
+    name: Android Gradle smoke
+    needs: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.5.0
+      - uses: dtolnay/rust-toolchain@1.91.0
+      - uses: Swatinem/rust-cache@v2
+      - run: sdkmanager "platforms;android-37" "build-tools;36.0.0"
+      - run: cargo build --release
+      - run: bash scripts/smoke-android-linux.sh
+
+  claude-linux-smoke:
+    name: Claude integration and compact git status smoke
     needs: clippy
     runs-on: ubuntu-latest
     steps:
@@ -206,12 +251,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.91.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release
+      - run: bash scripts/smoke-claude-linux.sh
 
-  # ─── AI Doc Review: develop PRs only ───
+  # Inherited secret-backed AI review is retained only as historical workflow context.
+  # The deterministic docs-contract job above is the release gate.
 
   doc-review:
     name: doc review
-    if: github.base_ref == 'develop'
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

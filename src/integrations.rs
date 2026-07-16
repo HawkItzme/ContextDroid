@@ -32,6 +32,7 @@ pub struct IntegrationResult {
     pub installed: bool,
     pub path: PathBuf,
     pub preview: String,
+    pub rtk_conflicts: usize,
 }
 
 pub fn run(
@@ -93,9 +94,21 @@ fn json_lifecycle(
     let mut root = read_json_object(&path, json!({}))?;
     let installed = json_hook_entries(&root, hook_key)
         .is_some_and(|entries| entries.iter().any(|value| contains_command(value, command)));
+    let rtk_conflicts = json_hook_entries(&root, hook_key).map_or(0, |entries| {
+        entries
+            .iter()
+            .filter(|value| contains_rtk_hook(value))
+            .count()
+    });
+    if action == Action::Install && rtk_conflicts > 0 {
+        anyhow::bail!(
+            "recognized RTK hook conflict in {}; run `contextdroid migrate rtk --apply` to back up and replace it",
+            path.display()
+        );
+    }
     let mut changed = false;
     match action {
-        Action::Install | Action::Preview if !installed => {
+        Action::Install | Action::Preview if !installed && rtk_conflicts == 0 => {
             json_hook_entries_mut(&mut root, hook_key)?.push(entry);
             changed = true;
         }
@@ -119,6 +132,7 @@ fn json_lifecycle(
         },
         path,
         preview,
+        rtk_conflicts,
     })
 }
 
@@ -134,9 +148,21 @@ fn cursor_lifecycle(path: PathBuf, action: Action) -> Result<IntegrationResult> 
             .iter()
             .any(|value| contains_command(value, CURSOR_COMMAND))
     });
+    let rtk_conflicts = json_hook_entries(&root, "preToolUse").map_or(0, |entries| {
+        entries
+            .iter()
+            .filter(|value| contains_rtk_hook(value))
+            .count()
+    });
+    if action == Action::Install && rtk_conflicts > 0 {
+        anyhow::bail!(
+            "recognized RTK hook conflict in {}; run `contextdroid migrate rtk --apply` to back up and replace it",
+            path.display()
+        );
+    }
     let mut changed = false;
     match action {
-        Action::Install | Action::Preview if !installed => {
+        Action::Install | Action::Preview if !installed && rtk_conflicts == 0 => {
             json_hook_entries_mut(&mut root, "preToolUse")?.push(cursor_entry());
             changed = true;
         }
@@ -160,16 +186,24 @@ fn cursor_lifecycle(path: PathBuf, action: Action) -> Result<IntegrationResult> 
         },
         path,
         preview,
+        rtk_conflicts,
     })
 }
 
 fn codex_lifecycle(path: PathBuf, action: Action) -> Result<IntegrationResult> {
     let original = fs::read_to_string(&path).unwrap_or_default();
     let installed = managed_range(&original).is_some();
+    let rtk_conflicts = usize::from(original.contains("<!-- rtk-managed:start"));
+    if action == Action::Install && rtk_conflicts > 0 {
+        anyhow::bail!(
+            "recognized RTK managed block in {}; run explicit RTK migration first",
+            path.display()
+        );
+    }
     let mut next = original.clone();
     let mut changed = false;
     match action {
-        Action::Install | Action::Preview if !installed => {
+        Action::Install | Action::Preview if !installed && rtk_conflicts == 0 => {
             if !next.is_empty() && !next.ends_with('\n') {
                 next.push('\n');
             }
@@ -203,6 +237,7 @@ fn codex_lifecycle(path: PathBuf, action: Action) -> Result<IntegrationResult> {
         },
         path,
         preview: next,
+        rtk_conflicts,
     })
 }
 
@@ -259,6 +294,83 @@ fn contains_command(value: &Value, command: &str) -> bool {
             .get("hooks")
             .and_then(Value::as_array)
             .is_some_and(|hooks| hooks.iter().any(|hook| contains_command(hook, command)))
+}
+
+fn contains_rtk_hook(value: &Value) -> bool {
+    value
+        .get("command")
+        .and_then(Value::as_str)
+        .is_some_and(|command| {
+            matches!(command.trim(), "rtk hook claude" | "rtk hook cursor")
+                || command.ends_with("/rtk-rewrite.sh")
+                || command.ends_with("\\rtk-rewrite.ps1")
+        })
+        || value
+            .get("hooks")
+            .and_then(Value::as_array)
+            .is_some_and(|hooks| hooks.iter().any(contains_rtk_hook))
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct RtkHookMigrationReport {
+    pub conflicts: usize,
+    pub contextdroid_entries: usize,
+    pub changed: bool,
+    pub backup: Option<PathBuf>,
+}
+
+pub fn migrate_claude_rtk_hooks(root: &Path, apply: bool) -> Result<RtkHookMigrationReport> {
+    let path = root.join("settings.json");
+    let mut value = read_json_object(&path, json!({}))?;
+    let entries = json_hook_entries_mut(&mut value, "PreToolUse")?;
+    let conflicts = entries
+        .iter()
+        .filter(|entry| contains_rtk_hook(entry))
+        .count();
+    let contextdroid_entries = entries
+        .iter()
+        .filter(|entry| contains_command(entry, CLAUDE_COMMAND))
+        .count();
+    let changed = conflicts > 0 || contextdroid_entries != 1;
+    let mut seen_contextdroid = false;
+    entries.retain(|entry| {
+        if contains_rtk_hook(entry) {
+            return false;
+        }
+        if contains_command(entry, CLAUDE_COMMAND) {
+            if seen_contextdroid {
+                return false;
+            }
+            seen_contextdroid = true;
+        }
+        true
+    });
+    if !seen_contextdroid {
+        entries.push(claude_entry());
+    }
+    let mut backup = None;
+    if apply && changed {
+        if path.exists() {
+            let backup_path = path.with_extension(format!(
+                "json.contextdroid-backup-{}",
+                chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
+            ));
+            fs::copy(&path, &backup_path).with_context(|| {
+                format!(
+                    "failed to retain integration backup {}",
+                    backup_path.display()
+                )
+            })?;
+            backup = Some(backup_path);
+        }
+        crate::product::write_atomic(&path, serde_json::to_string_pretty(&value)?.as_bytes())?;
+    }
+    Ok(RtkHookMigrationReport {
+        conflicts,
+        contextdroid_entries,
+        changed,
+        backup,
+    })
 }
 
 #[cfg(test)]
@@ -399,5 +511,47 @@ mod tests {
         .unwrap();
         assert!(!status.installed);
         assert!(!status.path.exists());
+    }
+
+    #[test]
+    fn install_fails_closed_on_rtk_conflict_and_migration_backs_up_and_replaces() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("settings.json");
+        fs::write(
+            &path,
+            r#"{"theme":"dark","hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"rtk hook claude"}]},{"command":"unrelated"}]}}"#,
+        )
+        .unwrap();
+
+        let status = run(
+            Agent::Claude,
+            Action::Status,
+            Some(temp.path().into()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(status.rtk_conflicts, 1);
+        assert!(run(
+            Agent::Claude,
+            Action::Install,
+            Some(temp.path().into()),
+            None
+        )
+        .is_err());
+
+        let report = migrate_claude_rtk_hooks(temp.path(), true).unwrap();
+        assert_eq!(report.conflicts, 1);
+        assert!(report
+            .backup
+            .as_ref()
+            .is_some_and(|backup| backup.is_file()));
+        let migrated = fs::read_to_string(&path).unwrap();
+        assert!(migrated.contains(CLAUDE_COMMAND));
+        assert!(migrated.contains("unrelated"));
+        assert!(migrated.contains("dark"));
+        assert!(!migrated.contains("rtk hook claude"));
+
+        let second = migrate_claude_rtk_hooks(temp.path(), true).unwrap();
+        assert!(!second.changed);
     }
 }

@@ -1,41 +1,26 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
-echo "🔍 Validating RTK documentation consistency..."
+required=(
+  README.md UPSTREAM.md THIRD_PARTY_NOTICES.md CHANGELOG.md CLAUDE.md
+  docs/ARCHITECTURE.md docs/CONTEXTDROID_PRODUCT_SPEC.md docs/SAFETY_CONTRACT.md
+  docs/FILTER_MATRIX.md docs/BENCHMARKS.md docs/INTEGRATIONS.md
+  docs/MIGRATION.md docs/RELEASE_CHECKLIST.md .agent/EXEC_PLAN.md
+)
 
-# 1. Source file count sanity check
-SRC_FILES=$(find src -name "*.rs" ! -name "mod.rs" ! -name "main.rs" | wc -l | tr -d ' ')
-echo "📊 Rust source files in src/: $SRC_FILES"
-
-# 3. Commandes Python/Go présentes partout
-PYTHON_GO_CMDS=("ruff" "pytest" "pip" "go" "golangci")
-echo "🐍 Checking Python/Go commands documentation..."
-
-for cmd in "${PYTHON_GO_CMDS[@]}"; do
-  if [ ! -f "README.md" ]; then
-    echo "⚠️  README.md not found, skipping"
-    break
-  fi
-  if ! grep -q "$cmd" "README.md"; then
-    echo "❌ README.md ne mentionne pas commande $cmd"
-    exit 1
-  fi
+for file in "${required[@]}"; do
+  test -s "$file" || { echo "missing required documentation: $file" >&2; exit 1; }
 done
-echo "✅ Python/Go commands: documented in README.md"
 
-# 4. Hooks cohérents avec doc
-HOOK_FILE=".claude/hooks/rtk-rewrite.sh"
-if [ -f "$HOOK_FILE" ]; then
-  echo "🪝 Checking hook rewrites..."
-  for cmd in "${PYTHON_GO_CMDS[@]}"; do
-    if ! grep -q "$cmd" "$HOOK_FILE"; then
-      echo "⚠️  Hook may not rewrite $cmd (verify manually)"
-    fi
-  done
-  echo "✅ Hook file exists and mentions Python/Go commands"
-else
-  echo "⚠️  Hook file not found: $HOOK_FILE"
+grep -q "independently maintained" README.md
+grep -q "v0.43.0" UPSTREAM.md
+grep -q "failure" docs/SAFETY_CONTRACT.md
+grep -q "snapshot" docs/FILTER_MATRIX.md
+grep -q "migrate rtk" docs/MIGRATION.md
+
+if grep -q "prefer .*rtk" CLAUDE.md; then
+  echo "CLAUDE.md must not tell contributors to compress repository commands" >&2
+  exit 1
 fi
 
-echo ""
-echo "✅ Documentation validation passed"
+echo "ContextDroid documentation contract passed"

@@ -149,6 +149,22 @@ pub struct DiagnosticRun {
     pub omissions: OmissionReport,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NeverWorseDecision {
+    Semantic,
+    RawLossless,
+    RawLowConfidence,
+    RawIncompleteEvidence,
+    RawNotSmaller,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderedDiagnostic {
+    pub output: String,
+    pub decision: NeverWorseDecision,
+}
+
 pub fn assess_confidence(
     failed: bool,
     events: &[DiagnosticEvent],
@@ -212,9 +228,52 @@ pub fn render(run: &DiagnosticRun, raw: &str, mode: OutputMode, context_lines: u
         append_raw_context(&mut output, run, raw, context_lines);
     }
     append_omissions(&mut output, &run.omissions);
-    let _ = writeln!(output, "Run: {}", run.run_id);
-    let _ = writeln!(output, "Raw: contextdroid show {} --raw", run.run_id);
+    if !run.events.is_empty() {
+        let _ = writeln!(output, "Run: {}", run.run_id);
+        let _ = writeln!(output, "Raw: contextdroid show {} --raw", run.run_id);
+    }
     output
+}
+
+pub fn render_checked(
+    run: &DiagnosticRun,
+    raw: &str,
+    mode: OutputMode,
+    context_lines: usize,
+) -> RenderedDiagnostic {
+    if mode == OutputMode::Lossless {
+        return RenderedDiagnostic {
+            output: raw.to_string(),
+            decision: NeverWorseDecision::RawLossless,
+        };
+    }
+    if run.confidence == ParseConfidence::Low {
+        return RenderedDiagnostic {
+            output: raw.to_string(),
+            decision: NeverWorseDecision::RawLowConfidence,
+        };
+    }
+    if run
+        .events
+        .iter()
+        .any(|event| event.severity == Severity::Error && event.message.trim().is_empty())
+    {
+        return RenderedDiagnostic {
+            output: raw.to_string(),
+            decision: NeverWorseDecision::RawIncompleteEvidence,
+        };
+    }
+    let semantic = render(run, raw, mode, context_lines);
+    if semantic.len() >= raw.len() {
+        return RenderedDiagnostic {
+            output: raw.to_string(),
+            decision: NeverWorseDecision::RawNotSmaller,
+        };
+    }
+    RenderedDiagnostic {
+        output: semantic,
+        decision: NeverWorseDecision::Semantic,
+    }
 }
 
 fn append_raw_context(output: &mut String, run: &DiagnosticRun, raw: &str, context_lines: usize) {
@@ -346,5 +405,31 @@ mod tests {
             render(&run, "raw evidence", OutputMode::Aggressive, 5),
             "raw evidence"
         );
+    }
+
+    #[test]
+    fn test_checked_render_replays_raw_when_semantic_is_not_smaller() {
+        let raw = "failed\n";
+        let rendered = render_checked(
+            &failed_run(ParseConfidence::High),
+            raw,
+            OutputMode::Balanced,
+            5,
+        );
+        assert_eq!(rendered.output, raw);
+        assert_eq!(rendered.decision, NeverWorseDecision::RawNotSmaller);
+    }
+
+    #[test]
+    fn test_checked_render_uses_semantic_only_when_evidence_is_complete_and_smaller() {
+        let raw = format!("{}\n", "verbose successful task chatter".repeat(200));
+        let rendered = render_checked(
+            &failed_run(ParseConfidence::High),
+            &raw,
+            OutputMode::Balanced,
+            5,
+        );
+        assert_eq!(rendered.decision, NeverWorseDecision::Semantic);
+        assert!(rendered.output.len() < raw.len());
     }
 }

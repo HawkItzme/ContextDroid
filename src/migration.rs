@@ -11,6 +11,8 @@ pub struct MigrationOptions {
     pub source_dir: PathBuf,
     pub destination_dir: PathBuf,
     pub apply: bool,
+    /// Claude integration root; defaults to `~/.claude` for the CLI.
+    pub claude_root: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -21,6 +23,7 @@ pub struct MigrationReport {
     pub legacy_analytics_rows: u64,
     pub applied: bool,
     pub skipped_sensitive_sections: Vec<String>,
+    pub claude_hooks: crate::integrations::RtkHookMigrationReport,
 }
 
 pub fn migrate_rtk(options: &MigrationOptions) -> Result<MigrationReport> {
@@ -38,6 +41,14 @@ pub fn migrate_rtk(options: &MigrationOptions) -> Result<MigrationReport> {
         ],
         ..MigrationReport::default()
     };
+
+    let claude_root = options
+        .claude_root
+        .clone()
+        .or_else(|| dirs::home_dir().map(|home| home.join(".claude")));
+    if let Some(root) = claude_root {
+        report.claude_hooks = crate::integrations::migrate_claude_rtk_hooks(&root, options.apply)?;
+    }
 
     if source_config.is_file() {
         let source_text = fs::read_to_string(&source_config)?;
@@ -210,6 +221,7 @@ mod tests {
             source_dir: source.path().into(),
             destination_dir: destination.path().into(),
             apply: false,
+            claude_root: Some(destination.path().join(".claude")),
         })
         .unwrap();
         assert!(report.config_would_change);
@@ -235,6 +247,7 @@ mod tests {
             source_dir: source.path().into(),
             destination_dir: destination.path().into(),
             apply: true,
+            claude_root: Some(destination.path().join(".claude")),
         })
         .unwrap();
         assert!(report.applied);
