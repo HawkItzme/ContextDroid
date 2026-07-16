@@ -66,6 +66,7 @@ pub struct FinalizeDetails {
     pub parser: Option<String>,
     pub confidence: String,
     pub raw_fallback: bool,
+    pub never_worse_fallback: bool,
     pub parser_error: bool,
     pub omission_preserved: u64,
     pub omission_collapsed: u64,
@@ -78,6 +79,7 @@ impl Default for FinalizeDetails {
             parser: None,
             confidence: String::new(),
             raw_fallback: false,
+            never_worse_fallback: false,
             parser_error: false,
             omission_preserved: 0,
             omission_collapsed: 0,
@@ -145,6 +147,8 @@ pub struct RunMetadata {
     pub parser: Option<String>,
     pub confidence: Option<String>,
     pub raw_fallback: bool,
+    #[serde(default)]
+    pub never_worse_fallback: bool,
     pub recovery_requested: bool,
     pub stdout_bytes: u64,
     pub stderr_bytes: u64,
@@ -221,13 +225,19 @@ impl RunStore {
         Self { root }
     }
 
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     pub fn default_store() -> Result<Self> {
-        if let Some(root) = std::env::var_os("CONTEXTDROID_RUNS_DIR") {
-            return Ok(Self::new(PathBuf::from(root)));
-        }
-        let root = crate::product::data_dir()
-            .context("cannot determine ContextDroid data directory")?
-            .join("runs");
+        let root = if let Some(root) = std::env::var_os("CONTEXTDROID_RUNS_DIR") {
+            PathBuf::from(root)
+        } else {
+            crate::product::data_dir()
+                .context("cannot determine ContextDroid data directory")?
+                .join("runs")
+        };
+        crate::core::secure_fs::reject_store_inside_repository(&root)?;
         Ok(Self::new(root))
     }
 
@@ -240,8 +250,7 @@ impl RunStore {
             .join(now.format("%m").to_string())
             .join(now.format("%d").to_string())
             .join(run_id.as_str());
-        fs::create_dir_all(&path)
-            .with_context(|| format!("failed to create run directory: {}", path.display()))?;
+        crate::core::secure_fs::ensure_private_dir(&path)?;
 
         let stdout = create_raw_file(&path.join("stdout.log"))?;
         let stderr = create_raw_file(&path.join("stderr.log"))?;
@@ -261,6 +270,7 @@ impl RunStore {
             parser: None,
             confidence: None,
             raw_fallback: false,
+            never_worse_fallback: false,
             recovery_requested: false,
             stdout_bytes: 0,
             stderr_bytes: 0,
@@ -340,13 +350,48 @@ impl RunStore {
             .join(value))
     }
 
+    pub fn remove(&self, id: &RunId) -> Result<()> {
+        let path = self.path_for(id)?;
+        crate::core::secure_fs::reject_reparse_components(&path)?;
+        if path.exists() {
+            fs::remove_dir_all(&path)
+                .with_context(|| format!("failed to remove run {}", id.as_str()))?;
+        }
+        Ok(())
+    }
+
+    pub fn list(&self) -> Result<Vec<(String, u64)>> {
+        let mut runs = self.run_candidates()?;
+        runs.sort_by_key(|run| std::cmp::Reverse(run.started_at));
+        Ok(runs
+            .into_iter()
+            .filter_map(|run| {
+                run.path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|id| (id.to_string(), run.bytes))
+            })
+            .collect())
+    }
+
+    pub fn purge_all(&self) -> Result<usize> {
+        let runs = self.run_candidates()?;
+        let count = runs.len();
+        for run in runs {
+            crate::core::secure_fs::reject_reparse_components(&run.path)?;
+            fs::remove_dir_all(&run.path)
+                .with_context(|| format!("failed to purge {}", run.path.display()))?;
+        }
+        Ok(count)
+    }
+
     pub fn prune(&self, policy: RetentionPolicy) -> Result<PruneReport> {
         self.prune_at(policy, Utc::now())
     }
 
     fn prune_at(&self, policy: RetentionPolicy, now: chrono::DateTime<Utc>) -> Result<PruneReport> {
         let mut runs = self.run_candidates()?;
-        runs.sort_by(|left, right| right.started_at.cmp(&left.started_at));
+        runs.sort_by_key(|run| std::cmp::Reverse(run.started_at));
         let mut report = PruneReport::default();
 
         for run in runs {
@@ -547,6 +592,7 @@ impl ActiveRun {
         self.metadata.parser = details.parser;
         self.metadata.confidence = Some(details.confidence);
         self.metadata.raw_fallback = details.raw_fallback;
+        self.metadata.never_worse_fallback = details.never_worse_fallback;
         self.metadata.stdout_bytes = self.stdout_bytes;
         self.metadata.stderr_bytes = self.stderr_bytes;
         self.metadata.stdout_sha256 = hash_file(&self.path.join("stdout.log"))?;
@@ -646,7 +692,7 @@ impl StoredRun {
 }
 
 fn create_raw_file(path: &Path) -> Result<File> {
-    File::create(path).with_context(|| format!("failed to create raw file: {}", path.display()))
+    crate::core::secure_fs::create_private_new(path)
 }
 
 fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<()> {
@@ -656,38 +702,11 @@ fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<()> {
 
 fn write_json_replace(path: &Path, value: &impl Serialize) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(value).context("failed to serialize run metadata")?;
-    let temp_path = path.with_extension("json.replace.tmp");
-    let mut file = File::create(&temp_path)
-        .with_context(|| format!("failed to create artifact: {}", temp_path.display()))?;
-    file.write_all(&bytes)
-        .with_context(|| format!("failed to write artifact: {}", temp_path.display()))?;
-    file.sync_all()
-        .with_context(|| format!("failed to sync artifact: {}", temp_path.display()))?;
-    if path.exists() {
-        fs::remove_file(path)
-            .with_context(|| format!("failed to replace artifact: {}", path.display()))?;
-    }
-    fs::rename(&temp_path, path)
-        .with_context(|| format!("failed to finalize artifact: {}", path.display()))?;
-    Ok(())
+    crate::core::secure_fs::atomic_write(path, &bytes)
 }
 
 fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    let temp_path = path.with_extension(format!(
-        "{}.tmp",
-        path.extension()
-            .and_then(|extension| extension.to_str())
-            .unwrap_or("artifact")
-    ));
-    let mut file = File::create(&temp_path)
-        .with_context(|| format!("failed to create artifact: {}", temp_path.display()))?;
-    file.write_all(bytes)
-        .with_context(|| format!("failed to write artifact: {}", temp_path.display()))?;
-    file.sync_all()
-        .with_context(|| format!("failed to sync artifact: {}", temp_path.display()))?;
-    fs::rename(&temp_path, path)
-        .with_context(|| format!("failed to finalize artifact: {}", path.display()))?;
-    Ok(())
+    crate::core::secure_fs::atomic_write(path, bytes)
 }
 
 fn hash_file(path: &Path) -> Result<String> {

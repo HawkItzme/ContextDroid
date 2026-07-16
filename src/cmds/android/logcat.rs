@@ -1,9 +1,10 @@
 use crate::core::runner::{self, RunOptions};
 use crate::diagnostics::{
-    Cause, ClassifiedFrame, DiagnosticEvent, DiagnosticKind, DiagnosticRun, FrameOwnership,
-    OmissionReport, ParseConfidence, ParserIdentity, Severity,
+    Cause, DiagnosticEvent, DiagnosticKind, DiagnosticRun, OmissionReport, ParseConfidence,
+    ParserIdentity, Severity,
 };
-use anyhow::Result;
+use anyhow::{bail, Result};
+use chrono::{DateTime, Duration, Local};
 use clap::ValueEnum;
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -19,6 +20,12 @@ pub enum LogcatMode {
     Binder,
     Native,
     Raw,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum LogcatAction {
+    Snapshot,
+    Stream,
 }
 
 struct ParsedLine<'a> {
@@ -38,28 +45,105 @@ lazy_static! {
     static ref PROCESS: Regex = Regex::new(r"^Process:\s*([^,]+),\s*PID:\s*(\d+)").unwrap();
 }
 
-pub fn build_adb_args(pid: Option<u32>, since: Option<&str>, raw_args: &[String]) -> Vec<String> {
+pub fn build_snapshot_args_at(
+    pid: Option<u32>,
+    since: crate::core::time_window::PositiveDuration,
+    raw_args: &[String],
+    now: DateTime<Local>,
+) -> Vec<String> {
     let mut args = vec!["logcat".to_string()];
     if let Some(pid) = pid {
         args.push(format!("--pid={pid}"));
     }
-    if let Some(since) = since {
-        args.push("-T".into());
-        args.push(since.into());
-    }
+    let cutoff = now - Duration::milliseconds(since.millis());
+    args.push("-t".into());
+    args.push(cutoff.format("%m-%d %H:%M:%S%.3f").to_string());
+    args.extend([
+        "-m".into(),
+        "20000".into(),
+        "-v".into(),
+        "threadtime".into(),
+    ]);
     args.extend(raw_args.iter().cloned());
     args
 }
 
+fn validate_snapshot_args(raw_args: &[String]) -> Result<()> {
+    const FORBIDDEN: &[&str] = &[
+        "-f",
+        "--file",
+        "-r",
+        "--rotate-kbytes",
+        "-n",
+        "--rotate-count",
+        "-c",
+        "--clear",
+        "-B",
+        "--binary",
+        "-d",
+        "--dump",
+        "-t",
+        "-T",
+        "-m",
+        "--max-count",
+    ];
+    if raw_args.iter().any(|arg| {
+        FORBIDDEN.contains(&arg.as_str())
+            || arg.starts_with("--file=")
+            || arg.starts_with("--rotate")
+    }) {
+        bail!("semantic Logcat snapshots reject file, rotation, clear, binary, dump, and custom bound flags");
+    }
+    Ok(())
+}
+
+pub struct LogcatRequest<'a> {
+    pub action: LogcatAction,
+    pub mode: LogcatMode,
+    pub package: Option<&'a str>,
+    pub pid: Option<u32>,
+    pub since: Option<&'a str>,
+    pub raw_args: &'a [String],
+    pub verbose: u8,
+}
+
 pub fn run(
-    mode: LogcatMode,
-    package: Option<&str>,
-    pid: Option<u32>,
-    since: Option<&str>,
-    raw_args: &[String],
-    verbose: u8,
+    request: LogcatRequest<'_>,
+    runtime: &crate::core::runtime::RuntimeContext,
 ) -> Result<i32> {
-    let args = build_adb_args(pid, since, raw_args);
+    let LogcatRequest {
+        action,
+        mode,
+        package,
+        pid,
+        since,
+        raw_args,
+        verbose,
+    } = request;
+    if action == LogcatAction::Stream {
+        if package.is_some() {
+            bail!("Logcat stream does not accept --package; use --pid or a bounded snapshot");
+        }
+        if since.is_some() {
+            bail!(
+                "Logcat stream does not accept --since; use snapshot for bounded semantic output"
+            );
+        }
+        if !matches!(mode, LogcatMode::All | LogcatMode::Raw) {
+            bail!("Logcat stream is pass-through only; incident modes require snapshot");
+        }
+        let mut args = vec!["logcat".to_string(), "-v".into(), "threadtime".into()];
+        if let Some(pid) = pid {
+            args.push(format!("--pid={pid}"));
+        }
+        args.extend(raw_args.iter().cloned());
+        let os_args: Vec<OsString> = args.iter().map(OsString::from).collect();
+        return runner::run_passthrough("adb", &os_args, verbose);
+    }
+
+    validate_snapshot_args(raw_args)?;
+    let since = since.unwrap_or("10m").parse()?;
+    let args = build_snapshot_args_at(pid, since, raw_args, Local::now());
     let os_args: Vec<OsString> = args.iter().map(OsString::from).collect();
     if mode == LogcatMode::Raw {
         return runner::run_passthrough("adb", &os_args, verbose);
@@ -68,15 +152,23 @@ pub fn run(
     command.args(&args);
     let display = args.join(" ");
     let package = package.map(str::to_string);
+    let stack_config = runtime.android.clone();
     runner::run_diagnostic(
         command,
         "adb",
         &display,
-        move |raw, _exit_code, run_id| parse(raw, run_id, mode, package.as_deref(), pid),
-        RunOptions::default(),
+        move |raw, _exit_code, run_id| {
+            parse_with_config(raw, run_id, mode, package.as_deref(), pid, &stack_config)
+        },
+        RunOptions {
+            profile: &runtime.profile,
+            output_mode: runtime.output_mode,
+            ..RunOptions::default()
+        },
     )
 }
 
+#[cfg(test)]
 pub fn parse(
     raw: &str,
     run_id: &str,
@@ -84,22 +176,40 @@ pub fn parse(
     package: Option<&str>,
     pid: Option<u32>,
 ) -> DiagnosticRun {
+    parse_with_config(raw, run_id, mode, package, pid, &Default::default())
+}
+
+pub fn parse_with_config(
+    raw: &str,
+    run_id: &str,
+    mode: LogcatMode,
+    package: Option<&str>,
+    pid: Option<u32>,
+    stack_config: &crate::cmds::android::stack::AndroidStackConfig,
+) -> DiagnosticRun {
     let lines: Vec<&str> = raw.lines().collect();
-    let mut marker = None;
+    let mut incidents: Vec<(usize, usize, DiagnosticKind)> = Vec::new();
+    let mut active: Option<(usize, DiagnosticKind)> = None;
     for (index, line) in lines.iter().enumerate() {
         let parsed = parse_line(line);
         let message = parsed.as_ref().map_or(*line, |line| line.message);
         if let Some(kind) = classify_message(message) {
             if mode_matches(mode, &kind) {
-                marker = Some((index, kind, parsed));
-                break;
+                if let Some((start, previous)) = active.take() {
+                    incidents.push((start, index, previous));
+                }
+                active = Some((index, kind));
             }
         }
+    }
+    if let Some((start, kind)) = active {
+        incidents.push((start, lines.len(), kind));
     }
 
     let mut events = Vec::new();
     let mut used = BTreeSet::new();
-    if let Some((marker_index, kind, parsed_marker)) = marker {
+    for (marker_index, end_index, kind) in incidents {
+        let parsed_marker = parse_line(lines[marker_index]);
         let mut details: BTreeMap<String, String> = BTreeMap::new();
         if let Some(line) = &parsed_marker {
             details.insert("timestamp".into(), line.timestamp.into());
@@ -118,7 +228,8 @@ pub fn parse(
         let mut root_message = marker_message;
         let mut error_type = None;
         used.insert(marker_index);
-        for (index, line) in lines.iter().enumerate().skip(marker_index) {
+        let mut frame_text = Vec::new();
+        for (index, line) in lines.iter().enumerate().take(end_index).skip(marker_index) {
             let parsed = parse_line(line);
             let message = parsed.as_ref().map_or(*line, |line| line.message).trim();
             if let Some(thread) = message.strip_prefix("FATAL EXCEPTION: ") {
@@ -159,21 +270,22 @@ pub fn parse(
                 }
             }
             if message.starts_with("at ") || message.starts_with('#') {
-                frames.push(ClassifiedFrame {
-                    text: message.into(),
-                    ownership: FrameOwnership::Unknown,
-                    location: None,
-                });
+                frame_text.push(message.to_string());
                 used.insert(index);
             }
         }
+
+        let collapsed = crate::cmds::android::stack::collapse_frames(
+            frame_text.iter().map(String::as_str),
+            stack_config,
+        );
+        frames.extend(collapsed.preserved);
 
         let package_matches = package.is_none_or(|expected| {
             details
                 .get("package")
                 .or_else(|| details.get("process"))
                 .is_some_and(|actual| actual == expected)
-                || raw.contains(expected)
         });
         let pid_matches = pid.is_none_or(|expected| {
             details
@@ -201,10 +313,12 @@ pub fn parse(
 
     let confidence = if events.is_empty() {
         ParseConfidence::Low
-    } else if events[0].details.contains_key("timestamp")
-        && events[0].details.contains_key("pid")
-        && events[0].details.contains_key("tid")
-    {
+    } else if events.iter().all(|event| {
+        event.details.contains_key("timestamp")
+            && event.details.contains_key("pid")
+            && event.details.contains_key("tid")
+            && (event.details.contains_key("package") || event.kind == DiagnosticKind::NativeCrash)
+    }) {
         ParseConfidence::High
     } else {
         ParseConfidence::Medium
@@ -367,11 +481,15 @@ mod tests {
     }
 
     #[test]
-    fn test_build_adb_args_preserves_pid_since_and_raw_args() {
-        let args = build_adb_args(
+    fn test_snapshot_args_are_bounded_and_use_threadtime() {
+        let now = DateTime::parse_from_rfc3339("2026-07-15T10:10:00+05:30")
+            .unwrap()
+            .with_timezone(&Local);
+        let args = build_snapshot_args_at(
             Some(4242),
-            Some("07-15 10:00:00.000"),
-            &["-d".into(), "-v".into(), "threadtime".into()],
+            "10m".parse().unwrap(),
+            &["ActivityManager:I".into()],
+            now,
         );
 
         assert_eq!(
@@ -379,12 +497,82 @@ mod tests {
             vec![
                 "logcat",
                 "--pid=4242",
-                "-T",
+                "-t",
                 "07-15 10:00:00.000",
-                "-d",
+                "-m",
+                "20000",
                 "-v",
-                "threadtime"
+                "threadtime",
+                "ActivityManager:I"
             ]
         );
+    }
+
+    #[test]
+    fn test_parser_segments_and_filters_each_incident_independently() {
+        let raw = r#"07-15 10:00:00.000  1000  111  112 E AndroidRuntime: FATAL EXCEPTION: main
+07-15 10:00:00.001  1000  111  112 E AndroidRuntime: Process: com.other, PID: 111
+07-15 10:00:00.002  1000  111  112 E AndroidRuntime: java.lang.IllegalStateException: other
+07-15 10:01:00.000  1000  222  223 E AndroidRuntime: FATAL EXCEPTION: worker
+07-15 10:01:00.001  1000  222  223 E AndroidRuntime: Process: com.target, PID: 222
+07-15 10:01:00.002  1000  222  223 E AndroidRuntime: java.lang.IllegalArgumentException: target
+"#;
+        let run = parse(raw, "run", LogcatMode::Crash, Some("com.target"), None);
+
+        assert_eq!(run.events.len(), 1);
+        assert_eq!(run.events[0].details["package"], "com.target");
+        assert_eq!(
+            run.events[0].message,
+            "java.lang.IllegalArgumentException: target"
+        );
+    }
+
+    #[test]
+    fn test_anr_and_crash_are_separate_incidents_and_partial_is_medium() {
+        let raw = r#"07-15 10:00:00.000  1000  111  112 E ActivityManager: ANR in com.target
+07-15 10:00:00.001  1000  111  112 E ActivityManager: Reason: timed out
+07-15 10:01:00.000  1000  222  223 E AndroidRuntime: FATAL EXCEPTION: main
+"#;
+        let run = parse(raw, "run", LogcatMode::All, None, None);
+
+        assert_eq!(run.events.len(), 2);
+        assert_eq!(run.events[0].kind, DiagnosticKind::Anr);
+        assert_eq!(run.events[1].kind, DiagnosticKind::LogcatCrash);
+        assert_eq!(run.confidence, ParseConfidence::Medium);
+    }
+
+    #[test]
+    fn test_snapshot_rejects_unbounded_or_file_output_flags() {
+        for args in [
+            vec!["-f".into(), "out.log".into()],
+            vec!["-d".into()],
+            vec!["-B".into()],
+        ] {
+            assert!(validate_snapshot_args(&args).is_err());
+        }
+    }
+
+    #[test]
+    fn test_stream_rejects_package_filter_instead_of_pretending_to_apply_it() {
+        let runtime = crate::core::runtime::RuntimeContext {
+            profile: crate::product::DEFAULT_PROFILE.into(),
+            output_mode: crate::diagnostics::OutputMode::Balanced,
+            android: crate::cmds::android::stack::AndroidStackConfig::default(),
+        };
+        let result = run(
+            LogcatRequest {
+                action: LogcatAction::Stream,
+                mode: LogcatMode::All,
+                package: Some("com.example"),
+                pid: None,
+                since: None,
+                raw_args: &[],
+                verbose: 0,
+            },
+            &runtime,
+        );
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("--package"));
     }
 }

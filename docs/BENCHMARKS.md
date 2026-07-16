@@ -13,7 +13,9 @@ billing. RTK benchmark percentages are not copied or used as ContextDroid claims
 
 ## Current alpha evidence
 
-Focused tests cover all parser categories, raw-first persistence, exact stream recovery,
+The data-driven `contract.json` corpus currently covers 30 required fixture families through
+parser, semantic assertions, renderer, durable store, exit status, and exact raw recovery.
+Focused tests also cover raw-first persistence, exact stream recovery,
 low-confidence fallback, omissions, exit/signal representation, safe no-rewrite behavior,
 and local analytics. The fixture corpus is still being expanded and no representative
 compression percentage is published yet.

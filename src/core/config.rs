@@ -19,6 +19,33 @@ pub struct Config {
     pub hooks: HooksConfig,
     #[serde(default)]
     pub limits: LimitsConfig,
+    #[serde(default)]
+    pub output: OutputConfig,
+    #[serde(default)]
+    pub android: AndroidConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OutputConfig {
+    pub mode: crate::diagnostics::OutputMode,
+}
+
+impl Default for OutputConfig {
+    fn default() -> Self {
+        Self {
+            mode: crate::diagnostics::OutputMode::Balanced,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AndroidConfig {
+    #[serde(default)]
+    pub application_ids: Vec<String>,
+    #[serde(default)]
+    pub source_prefixes: Vec<String>,
+    #[serde(default)]
+    pub generated_prefixes: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]

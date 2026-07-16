@@ -54,9 +54,22 @@ pub fn classify_frame(frame: &str, config: &AndroidStackConfig) -> FrameOwnershi
     {
         return FrameOwnership::GradlePlugin;
     }
-    if frame.trim_start().starts_with("at ") {
+    const KNOWN_THIRD_PARTY_PREFIXES: &[&str] = &[
+        "okhttp3.",
+        "retrofit2.",
+        "io.reactivex.",
+        "org.junit.",
+        "org.mockito.",
+        "com.google.gson.",
+    ];
+    if KNOWN_THIRD_PARTY_PREFIXES
+        .iter()
+        .any(|prefix| symbol.starts_with(prefix))
+    {
         FrameOwnership::ThirdParty
     } else {
+        // An unconfigured source-looking frame may belong to the application.
+        // Preserve it until ownership is positively known.
         FrameOwnership::Unknown
     }
 }
@@ -149,5 +162,18 @@ mod tests {
             .iter()
             .any(|frame| frame.ownership == FrameOwnership::Application));
         assert_eq!(collapsed.collapsed[&FrameOwnership::AndroidFramework], 2);
+    }
+
+    #[test]
+    fn test_unconfigured_source_frame_is_unknown_and_preserved() {
+        let frame = "at com.acme.feature.Checkout.submit(Checkout.kt:91)";
+        let collapsed = collapse_frames([frame], &AndroidStackConfig::default());
+
+        assert_eq!(
+            classify_frame(frame, &AndroidStackConfig::default()),
+            FrameOwnership::Unknown
+        );
+        assert_eq!(collapsed.preserved.len(), 1);
+        assert_eq!(collapsed.preserved[0].text, frame);
     }
 }

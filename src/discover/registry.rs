@@ -30,6 +30,14 @@ pub enum RewriteProfile {
 }
 
 impl RewriteProfile {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ContextdroidSafe => "contextdroid-safe",
+            Self::AndroidOnly => "android-only",
+            Self::RtkCompatible => "rtk-compatible",
+        }
+    }
+
     pub fn active() -> Self {
         match std::env::var("CONTEXTDROID_PROFILE").as_deref() {
             Ok("android-only") => Self::AndroidOnly,
@@ -71,7 +79,7 @@ pub fn rewrite_command_for_profile_with_config(
         RewriteProfile::AndroidOnly => None,
         RewriteProfile::ContextdroidSafe => rewrite_safe_git(trimmed),
         RewriteProfile::RtkCompatible => rewrite_command(trimmed, excluded, transparent_prefixes)
-            .map(|rewritten| rewritten.replace("rtk ", "contextdroid ")),
+            .map(|rewritten| replace_rtk_executable(&rewritten)),
     }
 }
 
@@ -128,43 +136,78 @@ fn is_universal_hard_stop(cmd: &str) -> bool {
 }
 
 fn rewrite_verified_android(cmd: &str) -> Option<String> {
-    let mut parts = cmd.split_whitespace();
-    let binary = parts.next()?;
-    let normalized = binary.rsplit(['/', '\\']).next().unwrap_or(binary);
-    let args: Vec<&str> = parts.collect();
+    let tokens = tokenize(cmd);
+    let mut args = tokens.iter().filter(|token| token.kind == TokenKind::Arg);
+    let binary = args.next()?;
+    let normalized = binary
+        .value
+        .trim_matches(['\'', '"'])
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(&binary.value);
+    let values: Vec<String> = args.map(|token| token.value.clone()).collect();
+    let rest_offset = binary.offset + binary.value.len();
+    let original_rest = cmd.get(rest_offset..)?.trim_start();
 
     if matches!(normalized, "gradlew" | "gradlew.bat") {
-        let first_task = args.iter().find(|arg| !arg.starts_with('-'))?;
-        let task = first_task.trim_start_matches(':').to_ascii_lowercase();
-        let verified = [
-            "assemble",
-            "bundle",
-            "build",
-            "install",
-            "test",
-            "connected",
-            "manageddevice",
-            "lint",
-            "dependencies",
-            "dependencyinsight",
-        ]
-        .iter()
-        .any(|family| task.contains(family));
-        return verified.then(|| format!("contextdroid gradlew {}", args.join(" ")));
+        crate::cmds::android::classifier::classify_gradle_args(&values)?;
+        return Some(format!("contextdroid gradlew {original_rest}"));
     }
 
     if normalized == "adb" {
-        let subcommand = args.first().copied().unwrap_or_default();
-        return match subcommand {
-            "devices" | "install" | "uninstall" => {
-                Some(format!("contextdroid adb {}", args.join(" ")))
-            }
-            "logcat" => Some(format!("contextdroid logcat {}", args[1..].join(" "))),
-            _ => None,
-        };
+        if !crate::cmds::android::classifier::adb_is_safe_text(&values) {
+            return None;
+        }
+        if values.first().is_some_and(|value| value == "logcat") {
+            let logcat_args = original_rest
+                .strip_prefix("logcat")
+                .unwrap_or_default()
+                .trim_start();
+            return Some(if logcat_args.is_empty() {
+                "contextdroid logcat snapshot".into()
+            } else {
+                format!("contextdroid logcat snapshot -- {logcat_args}")
+            });
+        }
+        return Some(format!("contextdroid adb {original_rest}"));
     }
 
     None
+}
+
+fn replace_rtk_executable(command: &str) -> String {
+    let tokens = tokenize(command);
+    let args: Vec<_> = tokens
+        .iter()
+        .filter(|token| token.kind == TokenKind::Arg)
+        .collect();
+    let mut index = 0;
+    while index < args.len()
+        && matches!(
+            args[index].value.as_str(),
+            "command" | "builtin" | "exec" | "noglob" | "nocorrect"
+        )
+    {
+        index += 1;
+    }
+    if args.get(index).is_some_and(|token| token.value == "env") {
+        index += 1;
+        while args
+            .get(index)
+            .is_some_and(|token| token.value.contains('=') && !token.value.starts_with('='))
+        {
+            index += 1;
+        }
+    }
+    let Some(token) = args.get(index).filter(|token| token.value == "rtk") else {
+        return command.to_string();
+    };
+    let end = token.offset + token.value.len();
+    format!(
+        "{}contextdroid{}",
+        &command[..token.offset],
+        &command[end..]
+    )
 }
 
 fn rewrite_safe_git(cmd: &str) -> Option<String> {
@@ -567,6 +610,7 @@ pub fn prefix_contains_rtk_disabled(prefix_part: &str) -> bool {
 }
 
 /// Check if a command has RTK_DISABLED= prefix in its env prefix portion.
+#[cfg(test)]
 pub fn cmd_has_rtk_disabled_prefix(cmd: &str) -> bool {
     let (prefix_part, _) = strip_disabled_prefix(cmd);
     prefix_contains_rtk_disabled(prefix_part)
@@ -4390,5 +4434,67 @@ mod tests {
             collapse_line_continuations("git diff HEAD~1"),
             std::borrow::Cow::<str>::Borrowed("git diff HEAD~1"),
         );
+    }
+
+    #[test]
+    fn safe_android_rewrite_classifies_every_gradle_task() {
+        for command in [
+            "./gradlew clean assembleDebug",
+            "./gradlew clean testDebugUnitTest",
+            "./gradlew :app:assembleDebug :lib:bundleRelease",
+            "./gradlew --project-dir sample assembleDebug",
+        ] {
+            assert!(
+                rewrite_command_for_profile(command, RewriteProfile::ContextdroidSafe).is_some(),
+                "did not rewrite {command}"
+            );
+        }
+        assert!(rewrite_command_for_profile(
+            "./gradlew assembleDebug customTask",
+            RewriteProfile::ContextdroidSafe
+        )
+        .is_none());
+        assert!(
+            rewrite_command_for_profile("./gradlew clean", RewriteProfile::ContextdroidSafe)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn safe_adb_rewrite_matches_only_approved_text_operations() {
+        assert_eq!(
+            rewrite_command_for_profile("adb logcat", RewriteProfile::ContextdroidSafe),
+            Some("contextdroid logcat snapshot".into())
+        );
+        assert!(rewrite_command_for_profile(
+            "adb shell am force-stop com.example",
+            RewriteProfile::ContextdroidSafe
+        )
+        .is_some());
+        assert!(rewrite_command_for_profile(
+            "adb shell dumpsys meminfo",
+            RewriteProfile::ContextdroidSafe
+        )
+        .is_none());
+        assert!(rewrite_command_for_profile(
+            "adb exec-out screencap -p",
+            RewriteProfile::ContextdroidSafe
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn compatibility_replacement_changes_only_the_executable_token() {
+        assert_eq!(
+            replace_rtk_executable("rtk git status"),
+            "contextdroid git status"
+        );
+        assert_eq!(
+            replace_rtk_executable("command rtk git status 'rtk data'"),
+            "command contextdroid git status 'rtk data'"
+        );
+        assert_eq!(replace_rtk_executable("echo 'rtk data'"), "echo 'rtk data'");
+        assert_eq!(replace_rtk_executable("/tmp/rtk status"), "/tmp/rtk status");
+        assert_eq!(replace_rtk_executable("\"rtk\" status"), "\"rtk\" status");
     }
 }

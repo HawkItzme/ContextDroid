@@ -1,7 +1,8 @@
 # Safety and Diagnostic Correctness Contract
 
-For every optimized command, ContextDroid saves untouched stdout and stderr before lossy
-transformation and preserves the original exit code or signal. A failed parse, storage
+For every optimized command, ContextDroid securely stages untouched stdout and stderr before
+lossy transformation and preserves the original exit code or signal. Successful staging is
+deleted by default; failed staging is retained for recovery. A failed parse, storage
 problem, missing failure evidence, or low confidence returns raw output.
 
 When present, failed Android output must retain the command, working directory, status,
@@ -16,3 +17,8 @@ output is never transformed. Universal hard stops apply even to `rtk-compatible`
 
 If any invariant cannot be established, the correct result is raw output—not a partial
 summary.
+
+Semantic output must also be smaller than faithful raw output. Otherwise ContextDroid replays
+raw and records a never-worse fallback. Analytics never stores full commands, arguments, paths,
+package names, device serials, error text, or Logcat contents; project/session selectors use
+local pseudonymous identifiers. No remote analytics client or endpoint exists.

@@ -19,7 +19,18 @@ lazy_static! {
     static ref VARIANT: Regex = Regex::new(r"(?i)(debug|release)").unwrap();
 }
 
+#[cfg(test)]
 pub fn parse(command: &str, raw: &str, exit_code: i32, run_id: &str) -> DiagnosticRun {
+    parse_with_config(command, raw, exit_code, run_id, &Default::default())
+}
+
+pub fn parse_with_config(
+    command: &str,
+    raw: &str,
+    exit_code: i32,
+    run_id: &str,
+    stack_config: &crate::cmds::android::stack::AndroidStackConfig,
+) -> DiagnosticRun {
     let task = raw.lines().find_map(extract_failed_task);
     let causes: Vec<Cause> = raw
         .lines()
@@ -38,7 +49,7 @@ pub fn parse(command: &str, raw: &str, exit_code: i32, run_id: &str) -> Diagnost
             let trimmed = line.trim_start();
             trimmed.starts_with("at ") || trimmed.starts_with('#')
         }),
-        &Default::default(),
+        stack_config,
     );
 
     let mut events = Vec::new();
@@ -93,12 +104,21 @@ pub fn parse(command: &str, raw: &str, exit_code: i32, run_id: &str) -> Diagnost
         });
     }
 
-    let confidence =
+    let mut confidence =
         if exit_code == 0 && raw.lines().any(|line| line.starts_with("BUILD SUCCESSFUL")) {
             ParseConfidence::High
         } else {
             assess_confidence(exit_code != 0, &events, false)
         };
+    if exit_code != 0
+        && confidence == ParseConfidence::High
+        && stack
+            .preserved
+            .iter()
+            .any(|frame| frame.ownership == crate::diagnostics::FrameOwnership::Unknown)
+    {
+        confidence = ParseConfidence::Medium;
+    }
     let mut omissions = OmissionReport::default();
     if successful_tasks > 0 {
         omissions
@@ -395,5 +415,27 @@ BUILD SUCCESSFUL in 1s
 
         assert_eq!(run.confidence, ParseConfidence::High);
         assert_eq!(run.omissions.collapsed["successful Gradle tasks"], 3);
+    }
+
+    #[test]
+    fn configured_application_frames_are_preserved_and_unconfigured_ownership_caps_confidence() {
+        let raw = "> Task :app:testDebug FAILED\ncom.example.Test > fails FAILED\n    at com.example.app.Checkout.submit(Checkout.kt:91)\n";
+        let configured = crate::cmds::android::stack::AndroidStackConfig {
+            source_prefixes: vec!["com.example".into()],
+            ..Default::default()
+        };
+        let run = parse_with_config("./gradlew test", raw, 1, "run", &configured);
+        assert_eq!(
+            run.events[0].frames[0].ownership,
+            crate::diagnostics::FrameOwnership::Application
+        );
+        assert_eq!(run.confidence, ParseConfidence::High);
+
+        let unknown = parse("./gradlew test", raw, 1, "run");
+        assert_eq!(
+            unknown.events[0].frames[0].ownership,
+            crate::diagnostics::FrameOwnership::Unknown
+        );
+        assert_eq!(unknown.confidence, ParseConfidence::Medium);
     }
 }

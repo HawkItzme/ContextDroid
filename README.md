@@ -1,8 +1,9 @@
 # ContextDroid
 
 ContextDroid is an independently maintained, Android-focused command-output optimizer
-derived from RTK. It extracts useful Android diagnostics for AI coding agents while saving
-the complete stdout and stderr of every optimized run for exact recovery.
+derived from RTK. It extracts useful Android diagnostics for AI coding agents while securely
+staging complete stdout and stderr before parsing. Failed optimized runs are retained for exact
+recovery; successful staging is deleted by default.
 
 ContextDroid is not affiliated with or endorsed by `rtk-ai`. The upstream provenance and
 pinned commit are recorded in [UPSTREAM.md](UPSTREAM.md); third-party notices are in
@@ -76,7 +77,8 @@ contextdroid gradlew assembleDebug
 contextdroid gradlew testDebugUnitTest
 contextdroid adb devices
 contextdroid adb install app-debug.apk
-contextdroid logcat --mode crash --package com.example.app
+contextdroid logcat snapshot --mode crash --package com.example.app --since 10m
+contextdroid logcat stream --package com.example.app
 ```
 
 Unsupported commands are not automatically transformed. In safe profiles, call inherited
@@ -89,7 +91,10 @@ compatibility commands explicitly only when you understand their output behavior
 - `android-only` automatically considers only verified Gradle, ADB, and Logcat commands.
 - `rtk-compatible` opts into inherited coverage, but cannot bypass universal hard stops.
 
-Select a profile with `--profile` or `CONTEXTDROID_PROFILE`. Pipelines, redirects,
+Select the rewrite profile before the subcommand, for example
+`contextdroid --profile android-only rewrite "./gradlew assembleDebug"`. The `gain` and
+`quality` subcommands use their own `--profile` execution filter. Select output with `--output-mode`,
+`CONTEXTDROID_OUTPUT_MODE`, or `[output].mode` (in that precedence). Pipelines, redirects,
 substitutions, structured/full output, security tools, downloads, binary protocols,
 unknown commands, and broad discovery/read operations pass through unchanged.
 
@@ -106,8 +111,9 @@ Verbose flags such as `--stacktrace`, `--full-stacktrace`, `--info`, `--debug`, 
 
 ## Raw recovery
 
-Every optimized run stores `metadata.json`, `diagnostics.json`, `summary.txt`,
-`stdout.log`, and `stderr.log`. Compact output includes a run ID.
+Every failed optimized run stores `metadata.json`, `diagnostics.json`, `summary.txt`,
+`stdout.log`, and `stderr.log`. Successful raw staging is deleted unless
+`CONTEXTDROID_RETAIN_SUCCESSES=1` is explicitly set. Compact failures include a run ID.
 
 ```text
 contextdroid show <RUN_ID>
@@ -117,6 +123,8 @@ contextdroid show <RUN_ID> --causes
 contextdroid show <RUN_ID> --json
 contextdroid show <RUN_ID> --raw
 contextdroid runs prune
+contextdroid runs list
+contextdroid runs purge --yes
 ```
 
 Stdout and stderr are stored separately. Raw replay labels streams because their original
@@ -130,12 +138,15 @@ client or consent flow.
 ```text
 contextdroid gain
 contextdroid gain --scope android
-contextdroid gain --command gradle --project . --since 7d
-contextdroid gain --format json
+contextdroid gain --command gradle --project . --profile contextdroid-safe --parser android-gradle --since 2h
+contextdroid gain --weekly --last 20 --format json
 contextdroid quality
 contextdroid quality --scope android --format json
 contextdroid session
 contextdroid discover
+contextdroid analytics export --format csv
+contextdroid analytics reset --yes
+contextdroid privacy status
 ```
 
 Token figures are estimates. Direct command-output reduction and effective reduction after
@@ -175,8 +186,10 @@ contextdroid migrate rtk --dry-run
 contextdroid migrate rtk --apply
 ```
 
-Only safe preferences and separately labeled legacy local analytics are imported. Hooks,
-trust state, telemetry state, and database path overrides are never imported.
+Only safe preferences and compatible local analytics are imported. Trust state, telemetry
+state, and database path overrides are never imported. Recognized RTK hooks make ordinary
+integration install fail closed; explicit apply backs up and replaces only recognized entries.
+See [docs/MIGRATION.md](docs/MIGRATION.md).
 
 ## Safe defaults and exclusions
 
