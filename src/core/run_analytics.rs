@@ -966,12 +966,10 @@ fn classify_family(command: &str) -> String {
             .split_whitespace()
             .next()
             .unwrap_or("other")
-            .trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-')
-            .to_string()
             .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
             .take(80)
             .collect::<String>()
-            .to_lowercase()
             .pipe_nonempty()
     }
 }
@@ -1003,11 +1001,11 @@ fn classify_operation(command: &str) -> String {
         .skip(1)
         .find(|token| !token.starts_with('-'))
         .unwrap_or("other")
-        .trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
+        .to_ascii_lowercase()
         .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
         .take(80)
         .collect::<String>()
-        .to_lowercase()
         .pipe_nonempty()
 }
 
@@ -1427,6 +1425,55 @@ mod tests {
             (all.runs, weekly.runs, android.runs, general.runs),
             (2, 2, 1, 1)
         );
+    }
+
+    #[test]
+    fn legacy_path_like_commands_do_not_break_migration() {
+        // Regression: legacy `commands` rows whose first argument is a path
+        // (e.g. `ls -la /home/user/foo`) must not produce an operation label
+        // containing '/' — classify_operation must strip disallowed
+        // characters throughout the token, not just at the ends.
+        let analytics = RunAnalytics::in_memory().unwrap();
+        analytics
+            .conn
+            .execute_batch(
+                "CREATE TABLE commands (
+               id INTEGER PRIMARY KEY, timestamp TEXT NOT NULL, original_cmd TEXT NOT NULL,
+               rtk_cmd TEXT NOT NULL, input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
+               saved_tokens INTEGER NOT NULL, savings_pct REAL NOT NULL, exec_time_ms INTEGER NOT NULL,
+               project_path TEXT NOT NULL);",
+            )
+            .unwrap();
+        analytics
+            .conn
+            .execute(
+                "INSERT INTO commands VALUES (1, ?1, 'ls -la /home/user/some/deep/path',
+             'contextdroid ls -la /home/user/some/deep/path', 100, 20, 80, 80.0, 5, '/project')",
+                [Utc::now().to_rfc3339()],
+            )
+            .unwrap();
+
+        let gain = analytics.gain(&RunQuery::default()).unwrap();
+        assert_eq!(gain.runs, 1);
+
+        let rows = analytics.executions(&RunQuery::default()).unwrap();
+        assert!(rows.iter().all(|row| !row.operation.contains('/')));
+    }
+
+    #[test]
+    fn classify_operation_strips_disallowed_characters_throughout() {
+        assert_eq!(
+            classify_operation("ls -la /home/user/some/deep/path"),
+            "homeusersomedeeppath"
+        );
+        assert_eq!(classify_operation("gradlew assembleDebug"), "assembledebug");
+        assert_eq!(classify_operation("git"), "other");
+    }
+
+    #[test]
+    fn classify_family_strips_disallowed_characters_throughout() {
+        assert_eq!(classify_family("./gradlew assembleDebug"), "gradle");
+        assert_eq!(classify_family("/usr/bin/git status"), "usrbingit");
     }
 
     #[test]
