@@ -158,5 +158,8 @@ fn synthetic_smoke_prepares_the_resource_fixture_directory() {
         .find("cp scenarios/broken.xml app/src/main/res/layout/broken.xml")
         .expect("smoke must inject the synthetic AAPT fixture");
 
-    assert!(mkdir < copy, "resource directory must exist before fixture copy");
+    assert!(
+        mkdir < copy,
+        "resource directory must exist before fixture copy"
+    );
 }
