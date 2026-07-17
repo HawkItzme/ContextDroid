@@ -24,4 +24,9 @@ jobs:
       publish: false
       prerelease: true
     permissions:
-      contents: read
+      # Reusable workflows cannot elevate permissions above their caller. The
+      # publish job is conditionally skipped here, but its declared permissions
+      # still have to be admitted while GitHub constructs the job graph.
+      contents: write
+      id-token: write
+      attestations: write
