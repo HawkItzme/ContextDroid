@@ -861,3 +861,21 @@ contracts; two security-workflow contracts; Git Bash documentation and shell syn
 installer syntax, success, checksum-tamper, and traversal tests; workflow YAML parsing; RustSec
 audit; cargo-deny advisories/bans/licenses/sources; and `git diff --check`. Semgrep is not installed
 on this host and remains a blocking pinned CI job.
+
+#### Publication recovery and permanent regression fix — 2026-07-17
+
+The exact tagged release workflow built, installed, checksummed, and attested all artifacts, but its
+publish job correctly stopped at name parity because GitHub converts `~` in uploaded DEB/RPM asset
+names to `.`. The unchanged package bytes were recovered from the workflow's verified output,
+renamed with GitHub-safe semver filenames, and their manifest and checksums were regenerated and
+validated. Exact local/remote name, size, and SHA-256 parity passed before the draft was briefly
+published.
+
+The first post-release run proved the Windows public installer and all four Unix downloads/checksums,
+but the Unix verification command looked in `INSTALL_DIR` while `install.sh` intentionally accepts
+`CONTEXTDROID_INSTALL_DIR`. The release was immediately returned to draft. The permanent fix now
+normalizes DEB/RPM filenames before artifact upload, rejects release-output filenames containing
+`~`, passes the correct Unix installer variable, and adds source-level regression contracts for both
+failures. The immutable release tag and package contents were not changed. Publication remains blocked
+until this fix passes protected-branch CI/package gates, merges to `main`, and all five public installer
+jobs pass against the republished prerelease.
