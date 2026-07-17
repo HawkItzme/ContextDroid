@@ -1,0 +1,13 @@
+# CODEOWNERS is advisory for the single-maintainer first alpha. Require it after a second maintainer joins.
+/src/core/runner.rs @HawkItzme
+/src/core/stream.rs @HawkItzme
+/src/core/run_store.rs @HawkItzme
+/src/core/secure_fs.rs @HawkItzme
+/src/hooks/ @HawkItzme
+/src/integrations.rs @HawkItzme
+/src/migration.rs @HawkItzme
+/install.sh @HawkItzme
+/release/ @HawkItzme
+/.github/workflows/ @HawkItzme
+/Cargo.toml @HawkItzme
+/Cargo.lock @HawkItzme
