@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-17",
+  "token_estimator": "ceil(utf8_bytes / 4)",
+  "iterations_per_fixture": 1000,
+  "rows": [
+    {"case":"Gradle success","fixture":"gradle_success.txt","raw_tokens_estimate":13,"returned_tokens_estimate":13,"direct_reduction_percent":0.0,"effective_reduction_percent":0.0,"confidence":"high","decision":"raw-incomplete-evidence","preservation":true,"average_latency_us":75},
+    {"case":"Kotlin failure","fixture":"kotlin_failure.txt","raw_tokens_estimate":281,"returned_tokens_estimate":113,"direct_reduction_percent":59.8,"effective_reduction_percent":59.8,"confidence":"high","decision":"semantic","preservation":true,"average_latency_us":684},
+    {"case":"Resource merge failure","fixture":"resource_merge_failure.txt","raw_tokens_estimate":21,"returned_tokens_estimate":21,"direct_reduction_percent":0.0,"effective_reduction_percent":0.0,"confidence":"high","decision":"raw-not-smaller","preservation":true,"average_latency_us":97},
+    {"case":"Manifest failure","fixture":"manifest_failure.txt","raw_tokens_estimate":25,"returned_tokens_estimate":25,"direct_reduction_percent":0.0,"effective_reduction_percent":0.0,"confidence":"high","decision":"raw-not-smaller","preservation":true,"average_latency_us":103},
+    {"case":"Unit-test failure","fixture":"unit_test_failure.txt","raw_tokens_estimate":33,"returned_tokens_estimate":33,"direct_reduction_percent":0.0,"effective_reduction_percent":0.0,"confidence":"high","decision":"raw-not-smaller","preservation":true,"average_latency_us":150},
+    {"case":"Logcat Java crash","fixture":"java_crash.txt","raw_tokens_estimate":92,"returned_tokens_estimate":92,"direct_reduction_percent":0.0,"effective_reduction_percent":0.0,"confidence":"high","decision":"raw-not-smaller","preservation":true,"average_latency_us":499},
+    {"case":"git status --short","fixture":"pinned architecture-samples with one synthetic untracked file","raw_tokens_estimate":9,"returned_tokens_estimate":9,"direct_reduction_percent":0.0,"effective_reduction_percent":0.0,"confidence":"not-applicable","decision":"exact-output","preservation":true,"raw_median_latency_ms":73.488,"contextdroid_release_median_latency_ms":115.260}
+  ]
+}

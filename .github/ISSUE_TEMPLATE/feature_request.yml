@@ -1,0 +1,24 @@
+name: Feature request
+description: Propose an Android parser, safe routing rule, integration, or recovery improvement
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Android or agent problem
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redistributable evidence and safety constraints
+      description: Do not attach proprietary or sensitive raw logs.
+    validations:
+      required: true
+  - type: textarea
+    id: fallback
+    attributes:
+      label: Expected confidence and raw-fallback behavior
+    validations:
+      required: true

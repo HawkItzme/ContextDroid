@@ -1,0 +1,57 @@
+name: Bug report
+description: Report incorrect routing, lost evidence, recovery, installation, or integration behavior
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Raw logs can contain secrets, personal data, private paths, package names, and device IDs. Redact before attaching. For vulnerabilities, use private reporting from SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: ContextDroid version and commit
+    validations:
+      required: true
+  - type: dropdown
+    id: profile
+    attributes:
+      label: Profile
+      options: [contextdroid-safe, android-only, rtk-compatible, direct explicit command]
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Redacted environment
+      description: OS, shell, JDK, Gradle, AGP, Kotlin, SDK, device/emulator, and agent integration as applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Exact redacted command and exit code/signal
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and preservation impact
+    validations:
+      required: true
+  - type: checkboxes
+    id: recovery
+    attributes:
+      label: Recovery checks
+      options:
+        - label: I tried `contextdroid show <RUN_ID> --raw` when a run ID was available.
+        - label: I removed or redacted secrets, personal data, private paths, package names, and device identifiers.
+        - label: This is not a security vulnerability.
+    validations:
+      required: true
