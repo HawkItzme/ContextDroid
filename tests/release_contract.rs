@@ -124,3 +124,17 @@ fn package_dry_run_gates_every_pull_request_commit() {
         "release packaging must not skip commits based on changed paths"
     );
 }
+
+#[test]
+fn rpm_prerelease_version_is_normalized_without_changing_cargo_identity() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workflow = fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+
+    assert!(workflow.contains("RPM_VERSION"));
+    assert!(workflow.contains("cargo generate-rpm --set-metadata"));
+    assert!(workflow.contains("rpm -qp --qf"));
+    assert!(
+        workflow.contains("sed 's/-/~/; s/-/_/g'"),
+        "RPM prereleases must sort before the corresponding stable version"
+    );
+}
