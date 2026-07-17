@@ -138,3 +138,15 @@ fn rpm_prerelease_version_is_normalized_without_changing_cargo_identity() {
         "RPM prereleases must sort before the corresponding stable version"
     );
 }
+
+#[test]
+fn archive_validation_does_not_trigger_pipefail_sigpipe() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workflow = fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+
+    assert!(!workflow.contains("tar -tzf \"$archive\" | grep"));
+    assert!(!workflow
+        .contains("unzip -Z1 release-output/contextdroid-x86_64-pc-windows-msvc.zip | grep"));
+    assert!(workflow.contains("archive-entries.txt"));
+    assert!(workflow.contains("windows-archive-entries.txt"));
+}

@@ -217,12 +217,14 @@ jobs:
             test -f "release-output/$asset"
           done < <(jq -r '.targets[].asset' release/targets.json)
           for archive in release-output/*.tar.gz; do
+            tar -tzf "$archive" > "$RUNNER_TEMP/archive-entries.txt"
             for entry in contextdroid LICENSE UPSTREAM.md THIRD_PARTY_NOTICES.md; do
-              tar -tzf "$archive" | grep -qx "$entry"
+              grep -Fxq "$entry" "$RUNNER_TEMP/archive-entries.txt"
             done
           done
+          unzip -Z1 release-output/contextdroid-x86_64-pc-windows-msvc.zip > "$RUNNER_TEMP/windows-archive-entries.txt"
           for entry in contextdroid.exe LICENSE UPSTREAM.md THIRD_PARTY_NOTICES.md; do
-            unzip -Z1 release-output/contextdroid-x86_64-pc-windows-msvc.zip | grep -qx "$entry"
+            grep -Fxq "$entry" "$RUNNER_TEMP/windows-archive-entries.txt"
           done
       - name: Generate SBOM, release manifest, and checksums
         env:
