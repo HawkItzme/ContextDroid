@@ -876,6 +876,28 @@ but the Unix verification command looked in `INSTALL_DIR` while `install.sh` int
 `CONTEXTDROID_INSTALL_DIR`. The release was immediately returned to draft. The permanent fix now
 normalizes DEB/RPM filenames before artifact upload, rejects release-output filenames containing
 `~`, passes the correct Unix installer variable, and adds source-level regression contracts for both
-failures. The immutable release tag and package contents were not changed. Publication remains blocked
-until this fix passes protected-branch CI/package gates, merges to `main`, and all five public installer
-jobs pass against the republished prerelease.
+failures. The immutable release tag and package contents were not changed.
+
+#### Final public release completion — 2026-07-17
+
+The recovery fix passed PR #5 into `develop` and promotion PR #6 into `main`. Each PR passed the full
+protected 16-job core CI and 14-job package dry run, including normalized DEB/RPM install/uninstall,
+five native archives, release assembly, and all five installer targets. Exact merge commit
+`a200d71b750696644f6dea22345eb9aa43aaee65` then passed all 16 main-branch CI jobs.
+
+Before republishing, all 16 private-draft assets were rechecked for exact filename, byte-length, and
+SHA-256 parity. The annotated immutable `v0.1.0-alpha.1` tag remains at reviewed and attested commit
+`f6a00bd2048ba66aa7f55b34c523825134cc5627`; no binary or package bytes changed during recovery.
+The public prerelease is available at
+<https://github.com/HawkItzme/ContextDroid/releases/tag/v0.1.0-alpha.1>.
+
+Post-release smoke run `29553266017` installed and executed the checksum-verified public release on
+Linux x86_64, Linux ARM64, macOS Intel, macOS ARM64, and Windows x86_64. A separate local Windows
+installation from the public URLs also returned `contextdroid 0.1.0-alpha.1`. The default branch,
+archived upstream refs, protected `main`/`develop` rules, immutable `v*` tag rule, repository About
+metadata/topics, secret scanning and push protection, Dependabot security updates, and private
+vulnerability reporting are configured. No private Android-project identity, source, log, fixture,
+or future test dependency is present in the repository.
+
+All alpha publication blockers are closed. Optional post-alpha work—Homebrew, social-preview artwork,
+broader live-device/OEM coverage, and pre-stable hardening—does not block direct installation.

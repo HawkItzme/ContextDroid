@@ -27,8 +27,8 @@ Required alpha matrix:
 | Unknown/malformed | fixture contract | byte-identical raw fallback |
 | Verbose flags | fixture and routing tests | lossless/raw behavior |
 
-The local Windows attempt on 2026-07-17 was inconclusive: the public sample dependency/bootstrap
-run produced no output before it was stopped, the installed `sdkmanager` is legacy and fails under
-JDK 23, and no JDK 17 is installed. This is not recorded as a pass. The clean CI job uses JDK 17
-and a configured Android SDK. Public release remains blocked until that job and the internal pilot
-record are green on the exact release commit.
+The local Windows public-sample attempt on 2026-07-17 was inconclusive: its dependency/bootstrap run
+produced no output before it was stopped, the installed `sdkmanager` is legacy and fails under JDK
+23, and no JDK 17 is installed. This is not recorded as a local pass. Clean JDK 17 CI and the
+permissioned internal pilot subsequently passed on the release candidate. Only redacted aggregate
+pilot evidence was retained; the public alpha is no longer blocked on this validation matrix.
