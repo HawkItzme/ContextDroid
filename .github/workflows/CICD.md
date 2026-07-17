@@ -1,140 +1,18 @@
-# CI/CD Flows
+# ContextDroid CI and release flow
 
-## PR Quality Gates (ci.yml)
+Pull requests to the product branch, `develop`, or `main` run formatting, cross-platform tests,
+Clippy, release builds, documentation/help contracts, Android smoke, Claude Linux smoke,
+Semgrep, dependency audit, and source/license policy checks.
 
-Trigger: pull_request to develop or master
+Ordinary contributions target `develop`. The exact reviewed `develop` commit is promoted to
+`main` only after the merge gate in `docs/RELEASE_CHECKLIST.md` passes. Branch protection must
+require the checked-in blocking jobs and CODEOWNER review for high-risk paths.
 
-```
-                          ┌──────────────────┐
-                          │    PR opened      │
-                          └────────┬─────────┘
-                                   │
-                          ┌────────▼─────────┐
-                          │    fmt --all     │
-                          └────────┬─────────┘
-                                   │
-                       ┌───────────▼──────────┐
-                       │ clippy --all-targets │
-                       └───┬───┬───┬───┬───┬──┘
-                           │   │   │   │   │
-           ┌───────────────┘   │   │   │   └────────────────┐
-           │       ┌───────────┘   │   └───────────┐        │
-           ▼       ▼              ▼               ▼        ▼
-     ┌──────────┐ ┌──────────┐ ┌───────────┐ ┌─────────┐ ┌──────────┐
-     │ test     │ │ security │ │ semgrep   │ │benchmark│ │ doc      │
-     │ ubuntu   │ │ cargo    │ │ AST-aware │ │ >=80%   │ │ review   │
-     │ windows  │ │ audit    │ │ diff-only │ │ savings │ │ ai agent │
-     │ macos    │ │ patterns │ │           │ │         │ │          │
-     └────┬─────┘ └────┬─────┘ └─────┬─────┘ └────┬────┘ └────┬─────┘
-          │            │             │             │            │
-          └────────────┴─────────┬───┴─────────────┴────────────┘
-                                 │
-                      ┌──────────▼─────────┐
-                      │  All must pass     │
-                      │  to merge          │
-                      └────────────────────┘
+`.github/workflows/package-dry-run.yml` invokes the reusable release workflow with publishing
+disabled. The release workflow validates the Cargo version, packages every canonical target,
+checks archive contents, generates `SHA256SUMS`, and tests the Linux installer locally.
 
-     + DCO check (independent, develop PRs only)
-     + Dependabot (weekly: Cargo deps + GitHub Actions)
-```
-
-## Merge to develop — pre-release (cd.yml)
-
-Trigger: push to develop | workflow_dispatch (not master) | Concurrency: cancel-in-progress
-
-```
-     ┌──────────────────┐
-     │ push to develop   │
-     │ OR dispatch       │
-     └────────┬─────────┘
-              │
-     ┌────────▼──────────────────┐
-     │ pre-release                │
-     │ compute next version      │
-     │ from conventional commits │
-     │ tag = v{next}-rc.{run}    │
-     └────────┬──────────────────┘
-              │
-     ┌────────▼──────────────────┐
-     │ release.yml               │
-     │ prerelease = true         │
-     └────────┬──────────────────┘
-              │
-     ┌────────▼──────────────────┐
-     │ Build                     │
-     │ 5 platforms + DEB + RPM   │
-     └────────┬──────────────────┘
-              │
-     ┌────────▼──────────────────┐
-     │ GitHub Release            │
-     │ (pre-release badge)       │
-     │                           │
-     │ Discord:  SKIPPED         │
-     │ Homebrew: SKIPPED         │
-     └──────────────────────────┘
-```
-
-## Merge to master — stable release (cd.yml)
-
-Trigger: push to master (only) | Concurrency: never cancelled
-
-```
-     ┌──────────────────┐
-     │ push to master    │
-     └────────┬─────────┘
-              │
-     ┌────────▼──────────────────┐
-     │ release-please            │
-     │ analyze conventional      │
-     │ commits                   │
-     └────────┬──────────────────┘
-              │
-         ┌────┴────────────────┐
-         │                     │
-    no release           release created
-         │                     │
-         ▼                     ▼
-  ┌──────────────┐    ┌───────────────────────┐
-  │ create/update│    │ release.yml            │
-  │ release PR   │    │ prerelease = false     │
-  └──────────────┘    └───────────┬───────────┘
-                                  │
-                     ┌────────────▼────────────┐
-                     │ Build                   │
-                     │ 5 platforms + DEB + RPM  │
-                     └────────────┬────────────┘
-                                  │
-                     ┌────────────▼────────────┐
-                     │ GitHub Release           │
-                     │ (stable, "Latest" badge) │
-                     └──┬─────────┬─────────┬──┘
-                        │         │         │
-                        ▼         ▼         ▼
-                    Discord   Homebrew   latest
-                    notify    tap update  tag
-```
-
-## Manual release (release.yml)
-
-Trigger: workflow_dispatch
-
-```
-     ┌────────────────────────┐
-     │ workflow_dispatch       │
-     │ inputs: tag, prerelease │
-     └───────────┬────────────┘
-                 │
-     ┌───────────▼────────────┐
-     │ Full build pipeline     │
-     │ 5 platforms + DEB + RPM │
-     └───────────┬────────────┘
-                 │
-          ┌──────┴──────┐
-          │             │
-   prerelease=false  prerelease=true
-          │             │
-          ▼             ▼
-     Discord        pre-release
-     Homebrew       badge only
-     latest tag
-```
+For publication, a maintainer must explicitly dispatch the release workflow from `main` with an
+existing tag that points to the checked-out commit. Publishing remains prohibited until explicit
+approval. The inherited release-please and next-release workflows are disabled for the first
+alpha.

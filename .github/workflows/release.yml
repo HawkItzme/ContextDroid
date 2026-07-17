@@ -1,212 +1,347 @@
-name: Release
+name: Release packaging
 
 on:
   workflow_call:
     inputs:
       tag:
-        description: 'Tag to release'
+        description: Exact package tag
         required: true
         type: string
+      publish:
+        description: Publish verified assets from an existing exact tag
+        required: false
+        type: boolean
+        default: false
       prerelease:
-        description: 'Mark as pre-release'
+        description: Mark the GitHub release as a prerelease
         required: false
         type: boolean
         default: false
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to release (e.g., v0.1.0)'
+        description: Exact package tag
         required: true
-      prerelease:
-        description: 'Mark as pre-release'
+        type: string
+        default: v0.1.0-alpha.1
+      publish:
+        description: Publish after every gate passes
+        required: true
         type: boolean
         default: false
+      prerelease:
+        description: Mark as prerelease
+        required: true
+        type: boolean
+        default: true
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    name: Build ${{ matrix.target }}
+  validate:
+    name: Validate release intent and raw gates
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: dtolnay/rust-toolchain@42520bdb3cb59f71dae6f8557f7056cf3a46c898 # 1.91.0
+        with:
+          components: rustfmt,clippy
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+      - name: Validate tag, version, commit, and prerelease policy
+        env:
+          TAG: ${{ inputs.tag }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+          test -n "$VERSION"
+          test "$TAG" = "v$VERSION"
+          if [[ "$PUBLISH" == "true" ]]; then
+            test "$GITHUB_REF" = "refs/heads/main"
+            git show-ref --verify --quiet "refs/tags/$TAG"
+            test "$(git rev-list -n1 "$TAG")" = "$GITHUB_SHA"
+            [[ "$TAG" == *-* ]]
+          fi
+      - run: cargo fmt --all --check
+      - run: cargo test --all --locked
+      - run: cargo clippy --all-targets --all-features --locked -- -D warnings
+      - run: cargo build --release --locked
+      - run: bash scripts/validate-docs.sh
+
+  archives:
+    name: Archive ${{ matrix.rust_target }}
+    needs: validate
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # macOS
-          - target: x86_64-apple-darwin
-            os: macos-latest
+          - rust_target: x86_64-unknown-linux-musl
+            asset: contextdroid-x86_64-unknown-linux-musl.tar.gz
             archive: tar.gz
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            archive: tar.gz
-          # Linux
-          - target: x86_64-unknown-linux-musl
-            os: ubuntu-latest
-            archive: tar.gz
+            os: ubuntu-24.04
             musl: true
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
+          - rust_target: aarch64-unknown-linux-gnu
+            asset: contextdroid-aarch64-unknown-linux-gnu.tar.gz
             archive: tar.gz
-            cross: true
-          # Windows
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
+            os: ubuntu-24.04-arm
+          - rust_target: x86_64-apple-darwin
+            asset: contextdroid-x86_64-apple-darwin.tar.gz
+            archive: tar.gz
+            os: macos-15-intel
+          - rust_target: aarch64-apple-darwin
+            asset: contextdroid-aarch64-apple-darwin.tar.gz
+            archive: tar.gz
+            os: macos-15
+          - rust_target: x86_64-pc-windows-msvc
+            asset: contextdroid-x86_64-pc-windows-msvc.zip
             archive: zip
-
+            os: windows-2025
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.91.0
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@42520bdb3cb59f71dae6f8557f7056cf3a46c898 # 1.91.0
         with:
-          targets: ${{ matrix.target }}
-
-      - name: Install cross-compilation tools
-        if: matrix.cross
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-
+          targets: ${{ matrix.rust_target }}
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          key: release-${{ matrix.rust_target }}
       - name: Install musl tools
         if: matrix.musl
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --locked --target ${{ matrix.rust_target }}
+      - name: Execute native Unix binary
+        if: matrix.archive == 'tar.gz'
+        run: target/${{ matrix.rust_target }}/release/contextdroid --version
+      - name: Execute native Windows binary
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: target/${{ matrix.rust_target }}/release/contextdroid.exe --version
+      - name: Package Unix archive
+        if: matrix.archive == 'tar.gz'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools
-
-      - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Package (Unix)
-        if: matrix.os != 'windows-latest'
+          tar -czf ${{ matrix.asset }} \
+            -C target/${{ matrix.rust_target }}/release contextdroid \
+            -C "$GITHUB_WORKSPACE" LICENSE UPSTREAM.md THIRD_PARTY_NOTICES.md
+      - name: Package Windows archive
+        if: matrix.archive == 'zip'
+        shell: pwsh
         run: |
-          cd target/${{ matrix.target }}/release
-          tar -czvf ../../../contextdroid-${{ matrix.target }}.${{ matrix.archive }} contextdroid
-          cd ../../..
-
-      - name: Package (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          cd target/${{ matrix.target }}/release
-          7z a ../../../contextdroid-${{ matrix.target }}.${{ matrix.archive }} contextdroid.exe
-          cd ../../..
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+          Compress-Archive -LiteralPath @(
+            'target/${{ matrix.rust_target }}/release/contextdroid.exe',
+            'LICENSE',
+            'UPSTREAM.md',
+            'THIRD_PARTY_NOTICES.md'
+          ) -DestinationPath '${{ matrix.asset }}'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: contextdroid-${{ matrix.target }}
-          path: contextdroid-${{ matrix.target }}.${{ matrix.archive }}
+          name: archive-${{ matrix.rust_target }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
 
-  build-deb:
-    name: Build DEB package
-    runs-on: ubuntu-latest
+  deb:
+    name: Build and test DEB
+    needs: validate
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.91.0
-
-      - name: Install cargo-deb
-        run: cargo install cargo-deb
-
-      - name: Build DEB
-        run: cargo deb
-
-      - name: Upload DEB
-        uses: actions/upload-artifact@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@42520bdb3cb59f71dae6f8557f7056cf3a46c898 # 1.91.0
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+      - run: cargo install --locked cargo-deb --version 3.7.0
+      - run: cargo deb --locked
+      - name: Install, execute, and uninstall DEB
+        run: |
+          sudo dpkg -i target/debian/*.deb
+          contextdroid --version
+          sudo dpkg -r contextdroid
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: contextdroid-deb
+          name: package-deb
           path: target/debian/*.deb
+          if-no-files-found: error
 
-  build-rpm:
-    name: Build RPM package
-    runs-on: ubuntu-latest
-    container: fedora:latest
+  rpm:
+    name: Build and test RPM
+    needs: validate
+    runs-on: ubuntu-24.04
+    container: fedora:42
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install dependencies
+      - run: dnf install -y curl gcc git rpm-build
+      - name: Install pinned Rust toolchain
         run: |
-          dnf install -y rust cargo rpm-build
-
-      - name: Install cargo-generate-rpm
-        run: cargo install cargo-generate-rpm
-
-      - name: Build release
-        run: cargo build --release
-
-      - name: Generate RPM
-        run: cargo generate-rpm
-
-      - name: Upload RPM
-        uses: actions/upload-artifact@v4
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup.sh
+          sh /tmp/rustup.sh -y --profile minimal --default-toolchain 1.91.0
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - run: cargo install --locked cargo-generate-rpm --version 0.21.0
+      - run: cargo build --release --locked
+      - name: Build RPM with normalized prerelease metadata
+        run: |
+          VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+          RPM_VERSION=$(printf '%s' "$VERSION" | sed 's/-/~/; s/-/_/g')
+          cargo generate-rpm --set-metadata "version = \"$RPM_VERSION\""
+          rpm -qp --qf '%{VERSION}\n' target/generate-rpm/*.rpm | grep -Fx "$RPM_VERSION"
+      - name: Install, execute, and uninstall RPM
+        run: |
+          rpm -i target/generate-rpm/*.rpm
+          contextdroid --version
+          rpm -e contextdroid
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: contextdroid-rpm
+          name: package-rpm
           path: target/generate-rpm/*.rpm
+          if-no-files-found: error
 
-  release:
-    name: Create Release
-    needs: [build, build-deb, build-rpm]
-    runs-on: ubuntu-latest
+  assemble:
+    name: Verify package dry run
+    needs: [archives, deb, rpm]
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/create-github-app-token@v3
-        id: app-token
-        with:
-          client-id: ${{ secrets.APP_CLIENT_ID }}
-          private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          permission-contents: write
-
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@42520bdb3cb59f71dae6f8557f7056cf3a46c898 # 1.91.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: artifacts
-
-      - name: Get version
-        id: version
+      - name: Flatten and validate exact archive contract
+        run: |
+          set -euo pipefail
+          mkdir release-output
+          find artifacts -type f -exec cp {} release-output/ \;
+          while IFS= read -r asset; do
+            test -f "release-output/$asset"
+          done < <(jq -r '.targets[].asset' release/targets.json)
+          for archive in release-output/*.tar.gz; do
+            tar -tzf "$archive" > "$RUNNER_TEMP/archive-entries.txt"
+            for entry in contextdroid LICENSE UPSTREAM.md THIRD_PARTY_NOTICES.md; do
+              grep -Fxq "$entry" "$RUNNER_TEMP/archive-entries.txt"
+            done
+          done
+          unzip -Z1 release-output/contextdroid-x86_64-pc-windows-msvc.zip > "$RUNNER_TEMP/windows-archive-entries.txt"
+          for entry in contextdroid.exe LICENSE UPSTREAM.md THIRD_PARTY_NOTICES.md; do
+            grep -Fxq "$entry" "$RUNNER_TEMP/windows-archive-entries.txt"
+          done
+      - name: Generate SBOM, release manifest, and checksums
         env:
-          INPUT_TAG: ${{ inputs.tag }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ inputs.tag }}
         run: |
-          TAG="$INPUT_TAG"
-          if [ -z "$TAG" ]; then
-            TAG="$RELEASE_TAG"
-          fi
-          echo "version=$TAG" >> $GITHUB_OUTPUT
-
-      - name: Flatten artifacts
-        run: |
-          mkdir -p release
-          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.deb" -o -name "*.rpm" \) -exec cp {} release/ \;
-
-      - name: Create version-agnostic package names
-        run: |
-          cd release
-          for f in *.deb; do
-            [ -f "$f" ] && cp "$f" "contextdroid_amd64.deb"
+          set -euo pipefail
+          cargo install --locked cargo-cyclonedx --version 0.5.9
+          cargo cyclonedx --format json --override-filename contextdroid.cdx
+          cp contextdroid.cdx.json release-output/contextdroid.cdx.json
+          cp LICENSE UPSTREAM.md THIRD_PARTY_NOTICES.md release/targets.json install.sh install.ps1 release-output/
+          printf '[]' > /tmp/release-artifacts.json
+          for path in release-output/*; do
+            name=$(basename "$path")
+            sha=$(sha256sum "$path" | awk '{print $1}')
+            size=$(stat -c '%s' "$path")
+            jq --arg name "$name" --arg sha "$sha" --argjson size "$size" \
+              '. + [{name: $name, bytes: $size, sha256: $sha}]' \
+              /tmp/release-artifacts.json > /tmp/release-artifacts.next.json
+            mv /tmp/release-artifacts.next.json /tmp/release-artifacts.json
           done
-          for f in *.rpm; do
-            [ -f "$f" ] && cp "$f" "contextdroid.x86_64.rpm"
-          done
-
-      - name: Create checksums
-        run: |
-          cd release
-          sha256sum * > checksums.txt
-
-      - name: Upload Release Assets
-        uses: softprops/action-gh-release@v2
+          jq -n --arg tag "$RELEASE_TAG" --arg commit "$GITHUB_SHA" \
+            --slurpfile artifacts /tmp/release-artifacts.json \
+            '{schema_version: 1, tag: $tag, commit: $commit, artifacts: $artifacts[0]}' \
+            > release-output/release-manifest.json
+          cd release-output
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | sort | xargs sha256sum > SHA256SUMS
+          sha256sum --check SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          tag_name: ${{ steps.version.outputs.version }}
-          files: release/*
-          prerelease: ${{ inputs.prerelease }}
-          token: ${{ steps.app-token.outputs.token }}
+          name: verified-release-output
+          path: release-output/*
+          if-no-files-found: error
+
+  verify-installers:
+    name: Installer ${{ matrix.label }}
+    needs: assemble
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x86_64
+            os: ubuntu-24.04
+            shell: sh
+          - label: Linux ARM64
+            os: ubuntu-24.04-arm
+            shell: sh
+          - label: macOS Intel
+            os: macos-15-intel
+            shell: sh
+          - label: macOS ARM64
+            os: macos-15
+            shell: sh
+          - label: Windows x86_64
+            os: windows-2025
+            shell: pwsh
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: verified-release-output
+          path: release-output
+      - name: Verify Unix installer
+        if: matrix.shell == 'sh'
+        shell: sh
+        env:
+          CONTEXTDROID_VERSION: ${{ inputs.tag }}
+          CONTEXTDROID_RELEASE_BASE: file://${{ github.workspace }}/release-output
+          CONTEXTDROID_INSTALL_DIR: ${{ runner.temp }}/contextdroid-bin
+        run: |
+          sh release-output/install.sh
+          "$CONTEXTDROID_INSTALL_DIR/contextdroid" --version
+      - name: Verify Windows installer
+        if: matrix.shell == 'pwsh'
+        shell: pwsh
+        env:
+          CONTEXTDROID_VERSION: ${{ inputs.tag }}
+          CONTEXTDROID_RELEASE_BASE: ${{ github.workspace }}\release-output
+          CONTEXTDROID_INSTALL_DIR: ${{ runner.temp }}\contextdroid-bin
+          CONTEXTDROID_NO_PATH_UPDATE: '1'
+        run: |
+          & .\release-output\install.ps1
+          & "$env:CONTEXTDROID_INSTALL_DIR\contextdroid.exe" --version
+
+  publish:
+    name: Publish verified assets
+    if: inputs.publish
+    needs: verify-installers
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: verified-release-output
+          path: release-output
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: release-output/*
+      - name: Upload a complete private draft, verify it, then publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            test "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true
+          else
+            gh release create "$TAG" --draft --prerelease \
+              --title "ContextDroid $TAG" \
+              --notes-file docs/releases/v0.1.0-alpha.1.md
+          fi
+          gh release upload "$TAG" release-output/* --clobber
+          find release-output -maxdepth 1 -type f -printf '%f\n' | sort > /tmp/expected-assets
+          gh release view "$TAG" --json assets --jq '.assets[].name' | sort > /tmp/uploaded-assets
+          diff -u /tmp/expected-assets /tmp/uploaded-assets
+          gh release edit "$TAG" --draft=false --prerelease

@@ -22,7 +22,10 @@ This software interacts with your development environment, file system, and exte
 
 ## Telemetry
 
-This software collects anonymous, aggregate usage metrics by default and can be disabled at any time. No personally identifiable information, source code, file paths, command arguments, or secrets are collected. See the README for full details and opt-out instructions.
+ContextDroid has no remote telemetry client in the alpha. Analytics, run metadata, and complete
+raw recovery artifacts are stored locally. Raw command output can contain source paths, device
+identifiers, secrets, personal data, or other sensitive information. Review retention settings,
+protect the local data directory, and redact artifacts before sharing them.
 
 ---
 

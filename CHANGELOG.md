@@ -21,7 +21,10 @@
 - Add tested Claude, Cursor, and Codex integration lifecycles and explicit RTK migration.
 - Add product provenance, safety, architecture, filter, benchmark, and release documents.
 
-All notable changes to rtk (Rust Token Killer) will be documented in this file.
+## Preserved upstream history
+
+The entries from `0.43.0` downward are preserved RTK history. Their links, product names, and
+historical benchmark statements are attribution records, not ContextDroid behavior or claims.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -1274,7 +1277,7 @@ breakage, but future rule additions won't take effect until they migrate.
 
 See upstream: https://github.com/pszymkowiak/rtk
 
-## Links
+## ContextDroid links
 
-- **Repository**: https://github.com/rtk-ai/rtk (maintained by pszymkowiak)
-- **Issues**: https://github.com/rtk-ai/rtk/issues
+- **Repository**: https://github.com/HawkItzme/ContextDroid
+- **Issues**: https://github.com/HawkItzme/ContextDroid/issues

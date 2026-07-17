@@ -119,7 +119,12 @@ mod tests {
     #[test]
     fn private_create_is_create_new_and_atomic_write_replaces() {
         let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("private").join("value");
+        let path = temp
+            .path()
+            .canonicalize()
+            .unwrap()
+            .join("private")
+            .join("value");
         create_private_new(&path).unwrap();
         assert!(create_private_new(&path).is_err());
         fs::remove_file(&path).unwrap();
@@ -131,7 +136,8 @@ mod tests {
     #[test]
     fn repository_storage_is_rejected() {
         let temp = tempfile::tempdir().unwrap();
-        fs::create_dir(temp.path().join(".git")).unwrap();
-        assert!(reject_store_inside_repository(&temp.path().join("runs")).is_err());
+        let root = temp.path().canonicalize().unwrap();
+        fs::create_dir(root.join(".git")).unwrap();
+        assert!(reject_store_inside_repository(&root.join("runs")).is_err());
     }
 }

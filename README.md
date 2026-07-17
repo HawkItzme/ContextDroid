@@ -19,32 +19,25 @@ output unchanged whenever parser confidence is low.
 
 ## Installation and availability
 
-No ContextDroid release has been published yet. There are three separate setup flows:
+Install the published alpha without Rust or a local build.
 
-### 1. Build the binary from source
+Linux and macOS:
 
-The current alpha is available by building this repository with Rust 1.91 or later:
-
-```text
-cargo build --release
+```sh
+curl -fsSL https://raw.githubusercontent.com/HawkItzme/ContextDroid/main/install.sh | sh
 ```
 
-The binary is `target/release/contextdroid` (or `contextdroid.exe` on Windows). Verify it
-before configuring an agent:
+Windows PowerShell:
 
-```text
-contextdroid --version
-contextdroid --help
+```powershell
+irm https://raw.githubusercontent.com/HawkItzme/ContextDroid/main/install.ps1 | iex
 ```
 
-The checked-in release installer and Homebrew formula are packaging inputs, not currently
-usable distribution channels. They depend on release archives and checksums that do not
-exist until a release is explicitly approved and published.
+Both installers select the current alpha, verify `SHA256SUMS`, reject unsafe archives, and
+verify the binary version before replacing an existing installation. Pin a release with
+`CONTEXTDROID_VERSION`, or download and inspect the installer before running it if preferred.
 
-### 2. Install an agent integration
-
-Build or otherwise place the `contextdroid` binary on `PATH` first. Agent integration is a
-separate operation; preview the bounded configuration change before installing it:
+Agent integration is a separate explicit operation:
 
 ```text
 contextdroid integrations claude preview
@@ -60,15 +53,8 @@ Use the corresponding `status` or `uninstall` action to inspect or remove only t
 ContextDroid entry. Installation modifies agent or project configuration; preview and status
 do not write.
 
-### 3. Install a published package
-
-This flow is not available yet. After release validation and explicit publishing approval,
-the project may offer versioned GitHub archives and the checksum-verifying `install.sh`.
-Homebrew is optional for the first alpha and will be advertised only after real archive
-checksums exist, a downstream tap is selected, and install/uninstall is tested.
-
-See the [installation guide](docs/guide/getting-started/installation.md) and
-[release checklist](docs/RELEASE_CHECKLIST.md) for current readiness.
+Direct archives, DEB, and RPM packages are also attached to the GitHub prerelease. Homebrew is
+deferred. See [INSTALL.md](INSTALL.md) for pinned, manual, rollback, and source-build options.
 
 ## Direct usage
 
@@ -171,11 +157,12 @@ contextdroid integrations cursor install --cursor-schema-version 1
 contextdroid integrations codex install --root .
 ```
 
-Replace `install` with `status` or `uninstall` as needed. Claude uses tested
-`PreToolUse` input replacement. Cursor is limited to verified hooks schema version 1.
-Codex receives a bounded managed `AGENTS.md` instruction block; ContextDroid does not
-claim transparent Codex command interception. Integrations preserve unrelated settings
-and are idempotent.
+Replace `install` with `status` or `uninstall` as needed. Claude Code on Linux is the
+supported alpha candidate and uses `PreToolUse` input replacement. Cursor schema version 1
+is experimental until cross-platform release-commit smoke is recorded. Codex receives a
+bounded managed `AGENTS.md` instruction block; ContextDroid does not claim transparent Codex
+command interception. Lifecycle tests require unrelated settings to be preserved and operations
+to be idempotent.
 
 ## RTK migration
 
@@ -212,12 +199,10 @@ percentage does not.
   samples.
 - Durable optimized output is returned after raw capture completes; live transformed
   streaming remains future work.
-- Windows is the current local verification platform. The configured Linux/macOS CI matrix
-  has not yet run against these changes.
-- Android parser coverage is synthetic; live Gradle/AGP projects, emulators/devices, ADB
-  operations, and generated Logcat incidents still require validation.
-- No release assets currently exist. Homebrew remains an optional distribution channel,
-  not a prerequisite for publishing direct alpha archives.
+- Release archives are verified on their native Linux, macOS, and Windows CI runners.
+- Android parser coverage combines redistributable fixtures, an Android Gradle smoke project,
+  and a pinned public validation project; device and OEM formats will continue to expand.
+- Homebrew remains deferred and is not required for direct alpha installation.
 
 ## Troubleshooting and uninstall
 

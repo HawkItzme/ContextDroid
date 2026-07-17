@@ -329,6 +329,13 @@ pub fn resolve_binary(name: &str) -> Result<PathBuf> {
     which::which(name).context(format!("Binary '{}' not found on PATH", name))
 }
 
+fn resolution_fallback_message(name: &str, error: &str) -> String {
+    format!(
+        "contextdroid: Failed to resolve '{}' via PATH, falling back to direct exec: {}",
+        name, error
+    )
+}
+
 /// Create a `Command` with PATHEXT-aware binary resolution.
 ///
 /// Drop-in replacement for `Command::new(name)` that works on Windows
@@ -350,10 +357,7 @@ pub fn resolved_command(name: &str) -> Command {
             // wasn't found — always warn so users have a signal.
             // On Unix, this is less common; only log in debug builds.
             if cfg!(any(target_os = "windows", debug_assertions)) {
-                eprintln!(
-                    "rtk: Failed to resolve '{}' via PATH, falling back to direct exec: {}",
-                    name, e
-                );
+                eprintln!("{}", resolution_fallback_message(name, &e.to_string()));
             }
 
             Command::new(name)
@@ -407,6 +411,13 @@ pub fn human_bytes(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_resolution_fallback_message_uses_contextdroid_identity() {
+        let message = resolution_fallback_message("gradle", "not found");
+        assert!(message.starts_with("contextdroid:"));
+        assert!(!message.contains("rtk:"));
+    }
 
     #[test]
     fn test_truncate_short_string() {

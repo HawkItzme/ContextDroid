@@ -17,6 +17,7 @@ grep -q "v0.43.0" UPSTREAM.md
 grep -q "failure" docs/SAFETY_CONTRACT.md
 grep -q "snapshot" docs/FILTER_MATRIX.md
 grep -q "migrate rtk" docs/MIGRATION.md
+bash scripts/check-stale-brand.sh
 
 if grep -q "prefer .*rtk" CLAUDE.md; then
   echo "CLAUDE.md must not tell contributors to compress repository commands" >&2

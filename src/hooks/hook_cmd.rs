@@ -30,6 +30,7 @@ fn read_stdin_limited() -> Result<String> {
 // ── Copilot hook (VS Code + Copilot CLI) ──────────────────────
 
 /// Format detected from the preToolUse JSON input.
+#[allow(dead_code)]
 enum HookFormat {
     /// VS Code Copilot Chat / Claude Code: `tool_name` + `tool_input.command`, supports `updatedInput`.
     VsCode { command: String },
@@ -43,6 +44,7 @@ enum HookFormat {
 
 /// Run the Copilot preToolUse hook.
 /// Auto-detects VS Code Copilot Chat vs Copilot CLI format.
+#[allow(dead_code)]
 pub fn run_copilot() -> Result<()> {
     let input = read_stdin_limited()?;
 
@@ -71,6 +73,7 @@ pub fn run_copilot() -> Result<()> {
     }
 }
 
+#[allow(dead_code)]
 fn detect_format(v: &Value) -> HookFormat {
     // VS Code Copilot Chat / Claude Code: snake_case keys
     if let Some(tool_name) = v.get("tool_name").and_then(|t| t.as_str()) {
@@ -160,6 +163,7 @@ fn decide_hook_action(cmd: &str, host: permissions::Host) -> HookDecision {
     decide_from_verdict(cmd, permissions::check_command_for(cmd, host))
 }
 
+#[allow(dead_code)]
 fn handle_vscode(cmd: &str) -> Result<()> {
     let (decision, rewritten) = match decide_hook_action(cmd, permissions::Host::Claude) {
         HookDecision::Deny => {
@@ -185,6 +189,7 @@ fn handle_vscode(cmd: &str) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn handle_copilot_cli(cmd: &str, args: &Value) -> Result<()> {
     if let Some(response) = copilot_cli_response(cmd, args) {
         let _ = writeln!(io::stdout(), "{response}");
@@ -192,6 +197,7 @@ fn handle_copilot_cli(cmd: &str, args: &Value) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn copilot_cli_response(cmd: &str, args: &Value) -> Option<Value> {
     copilot_cli_response_from_decision(
         args,
@@ -200,6 +206,7 @@ fn copilot_cli_response(cmd: &str, args: &Value) -> Option<Value> {
     )
 }
 
+#[allow(dead_code)]
 fn copilot_cli_response_from_decision(
     args: &Value,
     decision: HookDecision,
@@ -235,6 +242,7 @@ fn copilot_cli_response_from_decision(
 // ── Gemini hook ───────────────────────────────────────────────
 
 /// Run the Gemini CLI BeforeTool hook.
+#[allow(dead_code)]
 pub fn run_gemini() -> Result<()> {
     let input = read_stdin_limited()?;
 
@@ -278,10 +286,12 @@ pub fn run_gemini() -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn print_allow() {
     let _ = writeln!(io::stdout(), r#"{{"decision":"allow"}}"#);
 }
 
+#[allow(dead_code)]
 fn gemini_json(decision: &str, rewrite: Option<&str>) -> String {
     let mut output = serde_json::json!({ "decision": decision });
     if let Some(cmd) = rewrite {
@@ -290,6 +300,7 @@ fn gemini_json(decision: &str, rewrite: Option<&str>) -> String {
     output.to_string()
 }
 
+#[allow(dead_code)]
 fn print_gemini(decision: &str, rewrite: Option<&str>) {
     let _ = writeln!(io::stdout(), "{}", gemini_json(decision, rewrite));
 }

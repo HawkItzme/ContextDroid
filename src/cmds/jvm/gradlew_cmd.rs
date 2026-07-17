@@ -132,13 +132,13 @@ pub fn run(
                 tool,
                 &args_display,
                 move |raw, exit_code, run_id| {
-                    crate::cmds::android::gradle::parse_with_config(
+                    Ok(crate::cmds::android::gradle::parse_with_config(
                         &command,
                         raw,
                         exit_code,
                         run_id,
                         &stack_config,
-                    )
+                    ))
                 },
                 RunOptions {
                     profile: &runtime.profile,

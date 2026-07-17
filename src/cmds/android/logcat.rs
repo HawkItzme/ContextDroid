@@ -4,7 +4,7 @@ use crate::diagnostics::{
     ParserIdentity, Severity,
 };
 use anyhow::{bail, Result};
-use chrono::{DateTime, Duration, Local};
+use chrono::{DateTime, Duration, Local, TimeZone};
 use clap::ValueEnum;
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -45,12 +45,16 @@ lazy_static! {
     static ref PROCESS: Regex = Regex::new(r"^Process:\s*([^,]+),\s*PID:\s*(\d+)").unwrap();
 }
 
-pub fn build_snapshot_args_at(
+pub fn build_snapshot_args_at<Tz>(
     pid: Option<u32>,
     since: crate::core::time_window::PositiveDuration,
     raw_args: &[String],
-    now: DateTime<Local>,
-) -> Vec<String> {
+    now: DateTime<Tz>,
+) -> Vec<String>
+where
+    Tz: TimeZone,
+    Tz::Offset: std::fmt::Display,
+{
     let mut args = vec!["logcat".to_string()];
     if let Some(pid) = pid {
         args.push(format!("--pid={pid}"));
@@ -158,7 +162,14 @@ pub fn run(
         "adb",
         &display,
         move |raw, _exit_code, run_id| {
-            parse_with_config(raw, run_id, mode, package.as_deref(), pid, &stack_config)
+            Ok(parse_with_config(
+                raw,
+                run_id,
+                mode,
+                package.as_deref(),
+                pid,
+                &stack_config,
+            ))
         },
         RunOptions {
             profile: &runtime.profile,
@@ -305,6 +316,8 @@ pub fn parse_with_config(
                 location: None,
                 causes,
                 frames,
+                dependency_coordinates: Vec::new(),
+                test_assertion: None,
                 details,
                 raw_line: Some(marker_index),
             });
@@ -482,9 +495,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_args_are_bounded_and_use_threadtime() {
-        let now = DateTime::parse_from_rfc3339("2026-07-15T10:10:00+05:30")
-            .unwrap()
-            .with_timezone(&Local);
+        let now = DateTime::parse_from_rfc3339("2026-07-15T10:10:00+05:30").unwrap();
         let args = build_snapshot_args_at(
             Some(4242),
             "10m".parse().unwrap(),

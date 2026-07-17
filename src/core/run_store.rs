@@ -9,7 +9,7 @@ use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 static RUN_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,31 +61,17 @@ pub struct RunStart {
     pub output_mode: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct FinalizeDetails {
     pub parser: Option<String>,
-    pub confidence: String,
+    pub confidence: Option<String>,
     pub raw_fallback: bool,
     pub never_worse_fallback: bool,
     pub parser_error: bool,
     pub omission_preserved: u64,
     pub omission_collapsed: u64,
-    pub fixture_preservation: bool,
-}
-
-impl Default for FinalizeDetails {
-    fn default() -> Self {
-        Self {
-            parser: None,
-            confidence: String::new(),
-            raw_fallback: false,
-            never_worse_fallback: false,
-            parser_error: false,
-            omission_preserved: 0,
-            omission_collapsed: 0,
-            fixture_preservation: true,
-        }
-    }
+    pub fixture_preservation: Option<bool>,
+    pub exit_code_parity: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,14 +167,10 @@ pub struct RunMetadata {
     pub parser_error: bool,
     #[serde(default)]
     pub detectable_rerun: bool,
-    #[serde(default = "default_true")]
-    pub exit_code_parity: bool,
-    #[serde(default = "default_true")]
-    pub fixture_preservation: bool,
-}
-
-const fn default_true() -> bool {
-    true
+    #[serde(default)]
+    pub exit_code_parity: Option<bool>,
+    #[serde(default)]
+    pub fixture_preservation: Option<bool>,
 }
 
 pub struct RunStore {
@@ -290,8 +272,8 @@ impl RunStore {
             omission_collapsed: 0,
             parser_error: false,
             detectable_rerun: false,
-            exit_code_parity: true,
-            fixture_preservation: true,
+            exit_code_parity: None,
+            fixture_preservation: None,
         };
         write_json_atomic(&path.join("metadata.partial.json"), &metadata)?;
 
@@ -318,8 +300,12 @@ impl RunStore {
         };
         let bytes = fs::read(&metadata_path)
             .with_context(|| format!("run not found or metadata unreadable: {}", id.as_str()))?;
-        let metadata: RunMetadata =
+        let mut metadata: RunMetadata =
             serde_json::from_slice(&bytes).context("run metadata is corrupt")?;
+        if metadata.schema_version < 2 {
+            metadata.exit_code_parity = None;
+            metadata.fixture_preservation = None;
+        }
         if metadata.run_id != *id {
             anyhow::bail!("run metadata ID does not match requested ID");
         }
@@ -590,7 +576,7 @@ impl ActiveRun {
         self.metadata.exit_code = outcome.exit_code();
         self.metadata.signal = outcome.signal();
         self.metadata.parser = details.parser;
-        self.metadata.confidence = Some(details.confidence);
+        self.metadata.confidence = details.confidence;
         self.metadata.raw_fallback = details.raw_fallback;
         self.metadata.never_worse_fallback = details.never_worse_fallback;
         self.metadata.stdout_bytes = self.stdout_bytes;
@@ -611,7 +597,7 @@ impl ActiveRun {
         self.metadata.omission_preserved = details.omission_preserved;
         self.metadata.omission_collapsed = details.omission_collapsed;
         self.metadata.parser_error = details.parser_error;
-        self.metadata.exit_code_parity = true;
+        self.metadata.exit_code_parity = details.exit_code_parity;
         self.metadata.fixture_preservation = details.fixture_preservation;
         self.metadata.complete = true;
         write_json_atomic(&self.path.join("metadata.json"), &self.metadata)?;
@@ -755,7 +741,8 @@ mod tests {
     fn test_start_creates_separate_raw_streams_and_partial_metadata() {
         let temp = tempfile::tempdir().unwrap();
 
-        let run = start_run(temp.path());
+        let root = temp.path().canonicalize().unwrap();
+        let run = start_run(&root);
 
         assert!(run.path().join("stdout.log").is_file());
         assert!(run.path().join("stderr.log").is_file());
@@ -766,7 +753,8 @@ mod tests {
     #[test]
     fn test_raw_streams_preserve_exact_bytes() {
         let temp = tempfile::tempdir().unwrap();
-        let mut run = start_run(temp.path());
+        let root = temp.path().canonicalize().unwrap();
+        let mut run = start_run(&root);
         let stdout = b"first\r\nsecond\n\0tail";
         let stderr = b"error: \xff\xfe\n";
 
@@ -781,7 +769,8 @@ mod tests {
     #[test]
     fn test_finalize_writes_required_artifacts_and_checksums() {
         let temp = tempfile::tempdir().unwrap();
-        let mut run = start_run(temp.path());
+        let root = temp.path().canonicalize().unwrap();
+        let mut run = start_run(&root);
         run.write_stdout(b"BUILD FAILED\n").unwrap();
         run.write_stderr(b"root cause\n").unwrap();
 
@@ -792,7 +781,7 @@ mod tests {
                 "failure summary",
                 FinalizeDetails {
                     parser: Some("gradle".into()),
-                    confidence: "low".into(),
+                    confidence: Some("low".into()),
                     raw_fallback: true,
                     ..FinalizeDetails::default()
                 },
@@ -820,6 +809,9 @@ mod tests {
         assert_eq!(metadata.stdout_sha256.len(), 64);
         assert_eq!(metadata.stderr_sha256.len(), 64);
         assert!(metadata.raw_fallback);
+        assert_eq!(metadata.schema_version, 2);
+        assert_eq!(metadata.exit_code_parity, None);
+        assert_eq!(metadata.fixture_preservation, None);
         assert_eq!(stored.metadata.run_id, metadata.run_id);
     }
 
@@ -835,7 +827,8 @@ mod tests {
     #[test]
     fn test_capture_command_persists_both_streams_before_returning() {
         let temp = tempfile::tempdir().unwrap();
-        let mut run = start_run(temp.path());
+        let root = temp.path().canonicalize().unwrap();
+        let mut run = start_run(&root);
         let mut command = if cfg!(windows) {
             let mut command = std::process::Command::new("powershell.exe");
             command.args([
@@ -863,7 +856,7 @@ mod tests {
     #[test]
     fn test_store_loads_run_by_validated_id_and_marks_recovery() {
         let temp = tempfile::tempdir().unwrap();
-        let store = RunStore::new(temp.path().to_path_buf());
+        let store = RunStore::new(temp.path().canonicalize().unwrap());
         let run = store
             .start(RunStart {
                 command: "adb devices".into(),
@@ -905,10 +898,11 @@ mod tests {
     #[test]
     fn test_prune_enforces_age_and_count_limits_oldest_first() {
         let temp = tempfile::tempdir().unwrap();
-        let store = RunStore::new(temp.path().to_path_buf());
-        let old = create_dummy_run(temp.path(), "20260701T000000.000Z-aaaaaaaa", 10);
-        let recent = create_dummy_run(temp.path(), "20260714T000000.000Z-bbbbbbbb", 10);
-        let newest = create_dummy_run(temp.path(), "20260715T000000.000Z-cccccccc", 10);
+        let root = temp.path().canonicalize().unwrap();
+        let store = RunStore::new(root.clone());
+        let old = create_dummy_run(&root, "20260701T000000.000Z-aaaaaaaa", 10);
+        let recent = create_dummy_run(&root, "20260714T000000.000Z-bbbbbbbb", 10);
+        let newest = create_dummy_run(&root, "20260715T000000.000Z-cccccccc", 10);
         let now = chrono::DateTime::parse_from_rfc3339("2026-07-15T12:00:00Z")
             .unwrap()
             .with_timezone(&chrono::Utc);
@@ -933,9 +927,10 @@ mod tests {
     #[test]
     fn test_prune_enforces_total_byte_limit() {
         let temp = tempfile::tempdir().unwrap();
-        let store = RunStore::new(temp.path().to_path_buf());
-        let older = create_dummy_run(temp.path(), "20260714T000000.000Z-aaaaaaaa", 600);
-        let newest = create_dummy_run(temp.path(), "20260715T000000.000Z-bbbbbbbb", 600);
+        let root = temp.path().canonicalize().unwrap();
+        let store = RunStore::new(root.clone());
+        let older = create_dummy_run(&root, "20260714T000000.000Z-aaaaaaaa", 600);
+        let newest = create_dummy_run(&root, "20260715T000000.000Z-bbbbbbbb", 600);
         let now = chrono::DateTime::parse_from_rfc3339("2026-07-15T12:00:00Z")
             .unwrap()
             .with_timezone(&chrono::Utc);

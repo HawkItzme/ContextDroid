@@ -34,27 +34,6 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-/// Target agent for hook installation.
-#[derive(Debug, Clone, Copy, PartialEq, ValueEnum)]
-pub enum AgentTarget {
-    /// Claude Code (default)
-    Claude,
-    /// Cursor Agent (editor and CLI)
-    Cursor,
-    /// Windsurf IDE (Cascade)
-    Windsurf,
-    /// Cline / Roo Code (VS Code)
-    Cline,
-    /// Kilo Code
-    Kilocode,
-    /// Google Antigravity
-    Antigravity,
-    /// Pi coding agent
-    Pi,
-    /// Hermes CLI
-    Hermes,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, ValueEnum)]
 enum IntegrationAgent {
     Claude,
@@ -354,60 +333,6 @@ enum Commands {
         /// Pattern, path, and any rg flags (e.g. -v, -i, -t rust, --glob)
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         extra_args: Vec<String>,
-    },
-
-    /// Disabled legacy setup; use `integrations` for verified lifecycle management
-    Init {
-        /// Add to global assistant config directory instead of local project file
-        #[arg(short, long)]
-        global: bool,
-
-        /// Install OpenCode plugin (in addition to Claude Code)
-        #[arg(long)]
-        opencode: bool,
-
-        /// Initialize for Gemini CLI instead of Claude Code
-        #[arg(long)]
-        gemini: bool,
-
-        /// Target agent to install hooks for (default: claude)
-        #[arg(long, value_enum)]
-        agent: Option<AgentTarget>,
-
-        /// Show current configuration
-        #[arg(long)]
-        show: bool,
-
-        /// Inject full instructions into CLAUDE.md (legacy mode)
-        #[arg(long = "claude-md", group = "mode")]
-        claude_md: bool,
-
-        /// Hook only, no RTK.md
-        #[arg(long = "hook-only", group = "mode")]
-        hook_only: bool,
-
-        /// Auto-patch settings.json without prompting
-        #[arg(long = "auto-patch", group = "patch")]
-        auto_patch: bool,
-
-        /// Skip settings.json patching (print manual instructions)
-        #[arg(long = "no-patch", group = "patch")]
-        no_patch: bool,
-
-        /// Remove RTK artifacts for the selected assistant mode
-        #[arg(long)]
-        uninstall: bool,
-
-        /// Target Codex CLI (uses AGENTS.md + RTK.md, no Claude hook patching)
-        #[arg(long)]
-        codex: bool,
-
-        /// Install GitHub Copilot integration (VS Code + CLI)
-        #[arg(long)]
-        copilot: bool,
-        /// Preview changes without writing any files (combine with -v to show content)
-        #[arg(long = "dry-run", conflicts_with = "show")]
-        dry_run: bool,
     },
 
     /// Download with compact output (strips progress bars)
@@ -909,6 +834,7 @@ enum Commands {
 
     /// Show hook rewrite audit metrics (requires CONTEXTDROID_HOOK_AUDIT=1)
     #[command(name = "hook-audit")]
+    #[command(hide = true)]
     HookAudit {
         /// Show entries from last N days (0 = all time)
         #[arg(short, long, default_value = "7")]
@@ -929,7 +855,8 @@ enum Commands {
         args: Vec<String>,
     },
 
-    /// Hook processors for LLM CLI tools (Gemini CLI, Copilot, etc.)
+    /// Internal hook processors used by verified ContextDroid integrations
+    #[command(hide = true)]
     Hook {
         #[command(subcommand)]
         command: HookCommands,
@@ -942,10 +869,6 @@ enum HookCommands {
     Claude,
     /// Process Cursor Agent hook (reads JSON from stdin)
     Cursor,
-    /// Process Gemini CLI BeforeTool hook (reads JSON from stdin)
-    Gemini,
-    /// Process Copilot preToolUse hook (VS Code + Copilot CLI, reads JSON from stdin)
-    Copilot,
     /// Check how a command would be rewritten by the hook engine (dry-run)
     Check {
         /// Target agent
@@ -1410,7 +1333,6 @@ const RTK_META_COMMANDS: &[&str] = &[
     "quality",
     "discover",
     "learn",
-    "init",
     "config",
     "proxy",
     "run",
@@ -1689,29 +1611,6 @@ fn main() {
         }
     };
     std::process::exit(code);
-}
-
-#[cfg(test)]
-fn uninstall_init_dispatch<UninstallHermes, UninstallStandard>(
-    agent: Option<AgentTarget>,
-    global: bool,
-    gemini: bool,
-    codex: bool,
-    ctx: hooks::init::InitContext,
-    uninstall_hermes: UninstallHermes,
-    uninstall_standard: UninstallStandard,
-) -> Result<()>
-where
-    UninstallHermes: FnOnce(hooks::init::InitContext) -> Result<()>,
-    UninstallStandard: FnOnce(bool, bool, bool, bool, bool, hooks::init::InitContext) -> Result<()>,
-{
-    if agent == Some(AgentTarget::Hermes) {
-        uninstall_hermes(ctx)
-    } else {
-        let cursor = agent == Some(AgentTarget::Cursor);
-        let pi = agent == Some(AgentTarget::Pi);
-        uninstall_standard(global, gemini, codex, cursor, pi, ctx)
-    }
 }
 
 fn canonical_project_filter(project: Option<String>) -> Result<Option<String>> {
@@ -2143,10 +2042,6 @@ fn run_cli() -> Result<i32> {
             search::run(search::Engine::Rg, 80, 200, false, &extra_args, cli.verbose)?
         }
 
-        Commands::Init { .. } => anyhow::bail!(
-            "legacy init is disabled in ContextDroid alpha; use `contextdroid integrations <claude|cursor|codex> <preview|install|status|uninstall>`"
-        ),
-
         Commands::Wget { url, output, args } => {
             if output.as_deref() == Some("-") {
                 wget_cmd::run_stdout(&url, &args, cli.verbose)?
@@ -2214,7 +2109,10 @@ fn run_cli() -> Result<i32> {
             } else if monthly {
                 Some(core::time_window::PositiveDuration::MONTH)
             } else {
-                since.as_deref().map(core::run_analytics::parse_since).transpose()?
+                since
+                    .as_deref()
+                    .map(core::run_analytics::parse_since)
+                    .transpose()?
             };
             let last = if history { Some(20) } else { last };
             let query = core::run_analytics::RunQuery {
@@ -2254,7 +2152,10 @@ fn run_cli() -> Result<i32> {
                 project: canonical_project_filter(project)?,
                 profile: analytics_profile,
                 parser,
-                since: since.as_deref().map(core::run_analytics::parse_since).transpose()?,
+                since: since
+                    .as_deref()
+                    .map(core::run_analytics::parse_since)
+                    .transpose()?,
                 last: last.map(core::time_window::LastCount::new).transpose()?,
                 ..Default::default()
             };
@@ -2466,7 +2367,10 @@ fn run_cli() -> Result<i32> {
         },
 
         Commands::Data { command } => match command {
-            DataCommands::Purge { yes, include_config } => {
+            DataCommands::Purge {
+                yes,
+                include_config,
+            } => {
                 if !yes {
                     anyhow::bail!("data purge requires --yes");
                 }
@@ -2705,14 +2609,6 @@ fn run_cli() -> Result<i32> {
             }
             HookCommands::Cursor => {
                 hooks::hook_cmd::run_cursor()?;
-                0
-            }
-            HookCommands::Gemini => {
-                hooks::hook_cmd::run_gemini()?;
-                0
-            }
-            HookCommands::Copilot => {
-                hooks::hook_cmd::run_copilot()?;
                 0
             }
             HookCommands::Check { agent: _, command } => {
@@ -3039,7 +2935,6 @@ fn is_operational_command(cmd: &Commands) -> bool {
 mod tests {
     use super::*;
     use clap::Parser;
-    use std::cell::Cell;
 
     #[test]
     fn test_git_commit_single_message() {
@@ -3175,17 +3070,6 @@ mod tests {
     }
 
     #[test]
-    fn test_try_parse_init_agent_hermes() {
-        let cli = Cli::try_parse_from(["rtk", "init", "--agent", "hermes"]).unwrap();
-        match cli.command {
-            Commands::Init { agent, .. } => {
-                assert_eq!(agent, Some(AgentTarget::Hermes));
-            }
-            _ => panic!("Expected Init command"),
-        }
-    }
-
-    #[test]
     fn test_try_parse_kubectl_get_alias() {
         let cli = Cli::try_parse_from(["rtk", "kubectl", "get", "pods", "-n", "default"]).unwrap();
 
@@ -3219,52 +3103,6 @@ mod tests {
             } => {}
             _ => panic!("Expected Oc Other command"),
         }
-    }
-
-    #[test]
-    fn test_try_parse_init_agent_hermes_uninstall() {
-        let cli = Cli::try_parse_from(["rtk", "init", "--agent", "hermes", "--uninstall"]).unwrap();
-        match cli.command {
-            Commands::Init {
-                agent, uninstall, ..
-            } => {
-                assert_eq!(agent, Some(AgentTarget::Hermes));
-                assert!(uninstall);
-            }
-            _ => panic!("Expected Init command"),
-        }
-    }
-
-    #[test]
-    fn test_init_uninstall_dispatch_routes_hermes_to_hermes_cleanup() {
-        let hermes_called = Cell::new(false);
-        let standard_called = Cell::new(false);
-        let ctx = hooks::init::InitContext {
-            verbose: 2,
-            dry_run: true,
-        };
-
-        let result = uninstall_init_dispatch(
-            Some(AgentTarget::Hermes),
-            true,
-            false,
-            false,
-            ctx,
-            |ctx| {
-                hermes_called.set(true);
-                assert_eq!(ctx.verbose, 2);
-                assert!(ctx.dry_run);
-                Ok(())
-            },
-            |_, _, _, _, _, _| {
-                standard_called.set(true);
-                Ok(())
-            },
-        );
-
-        assert!(result.is_ok());
-        assert!(hermes_called.get());
-        assert!(!standard_called.get());
     }
 
     #[test]
@@ -3526,7 +3364,6 @@ mod tests {
             vec!["rtk", "gain"],
             vec!["rtk", "discover"],
             vec!["rtk", "learn"],
-            vec!["rtk", "init"],
             vec!["rtk", "config"],
             vec!["rtk", "proxy", "echo", "hi"],
             vec!["rtk", "run", "-c", "echo hi"],
@@ -3833,47 +3670,6 @@ mod tests {
                 assert_eq!(args, vec!["cowsay", "hello"]);
             }
             _ => panic!("Expected Commands::Npx for unknown tool"),
-        }
-    }
-
-    #[test]
-    fn test_init_pi_flag_rejected() {
-        // --pi has been removed; --agent pi is the canonical form
-        let result = Cli::try_parse_from(["rtk", "init", "--pi"]);
-        assert!(result.is_err(), "--pi must be rejected as unknown argument");
-    }
-
-    #[test]
-    fn test_init_agent_pi_parses() {
-        let cli = Cli::try_parse_from(["rtk", "init", "--agent", "pi"]).unwrap();
-        match cli.command {
-            Commands::Init { agent, .. } => {
-                assert_eq!(
-                    agent,
-                    Some(AgentTarget::Pi),
-                    "--agent pi must set Pi variant"
-                );
-            }
-            _ => panic!("Expected Init command"),
-        }
-    }
-
-    #[test]
-    fn test_init_uninstall_agent_pi_parses() {
-        let cli = Cli::try_parse_from(["rtk", "init", "--uninstall", "--agent", "pi", "--global"])
-            .unwrap();
-        match cli.command {
-            Commands::Init {
-                uninstall,
-                agent,
-                global,
-                ..
-            } => {
-                assert!(uninstall);
-                assert_eq!(agent, Some(AgentTarget::Pi));
-                assert!(global);
-            }
-            _ => panic!("Expected Init command"),
         }
     }
 }

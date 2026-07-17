@@ -657,3 +657,207 @@ configuration change, or destructive repository operation was performed.
   redistributable real-world Android fixtures remain pre-stable hardening work.
 - The branch is intentionally uncommitted. Review and CI must precede merging; publication remains
   separately gated by explicit approval.
+
+## Approved final release-readiness plan — 2026-07-17
+
+The final `v0.1.0-alpha.1` readiness plan was approved for implementation on
+`fix/contextdroid-v0.1-release-readiness` at `e5f80c2cfd87c5e448d3e2b952319ea38cd6a424`.
+This section supersedes earlier claims that CI had not run: PR-head runs `29465606705` and
+`29472266156` completed and failed. Linux, macOS, and Windows tests exposed a timezone-dependent
+Logcat assertion; macOS also exposed `/var` temporary-root symlink handling; Android smoke requested
+an unavailable stable-channel API 37 package. Fresh local Windows gates on the approved starting
+commit were green with 2,284 passed and 8 ignored in the main suite, not the stale recorded 2,281.
+
+### Locked policy decisions
+
+- Contribution policy is Apache-2.0 inbound=outbound. ContextDroid has no CLA or DCO gate.
+- The first alpha is a manually approved GitHub prerelease. Inherited release-please state and
+  automatic publishing are disabled; ContextDroid-specific automation is deferred until after alpha.
+- Real validation uses the Apache-2.0 `android/architecture-samples` project plus one permissioned
+  internal organization Android project. Only redacted aggregate evidence may be committed.
+- Stable Android CI uses API 36 with AGP 9.3, Gradle 9.5, Build Tools 36, and JDK 17.
+- Direct archives, DEB, and RPM are alpha channels. Homebrew publication is deferred.
+- Claude Linux is the only hook integration eligible for supported status. Cursor schema v1 remains
+  experimental; Codex is managed `AGENTS.md` guidance and never transparent interception.
+- No push, PR creation, merge, tag, release, asset upload, default-branch/ref mutation, global user
+  configuration change, or package publication is authorized by implementation approval alone.
+
+### Implementation milestones and commit boundaries
+
+1. `fix(ci): restore deterministic cross-platform readiness gates`
+   - Make Logcat time construction testable with a fixed offset while production uses local time.
+   - Canonicalize macOS test temporary roots without weakening managed-root symlink rejection.
+   - Use stable API 36 in the Android smoke project and workflow.
+2. `test(android): prove semantic evidence preservation`
+   - Replace raw-fixture substring assertions with typed event, cause, location, application-frame,
+     dependency/test field, renderer, omission, confidence, never-worse, exit/signal, run-ID, and
+     byte-exact stdout/stderr recovery assertions.
+   - Add schema-v2 diagnostic fields and evidence-inventory validation wherever the new red contracts
+     prove the current parser or renderer incomplete.
+3. `fix(quality): represent unmeasured runtime correctness as unknown`
+   - Make fixture preservation and independent exit parity nullable, migrate v1 asserted truth to
+     unknown, make parser failures observable, and test text/JSON `quality` output.
+4. `refactor(integrations): remove unsupported inherited agent surfaces`
+   - Remove legacy `init`, unsupported hook commands/assets, and OpenClaw from the alpha surface while
+     preserving Claude/Cursor/Codex lifecycle and explicit RTK backup/rollback.
+5. `docs: replace inherited RTK legal and public identity`
+   - Replace contribution, security, install, disclaimer, changelog, nested docs, generated agent
+     instructions, scripts, source READMEs, user strings, links, contacts, telemetry statements, and
+     unsupported claims. Add a blocking deterministic stale-brand policy.
+6. `chore(release): disable inherited release-please for first alpha`
+   - Remove active release-please manifests/workflows and align Cargo, changelog, tag contract, and
+     release-title version state at `0.1.0-alpha.1`.
+7. `fix(installer): unify target and release asset contracts`
+   - Add canonical target metadata for Linux x86_64 musl, Linux ARM64 GNU, macOS Intel/ARM, and Windows
+     x86_64. Execute the real installer/uninstaller against local artifacts and reject unsafe archives.
+8. `ci(release): add locked packaging dry run and protected publication`
+   - Run raw locked gates; pin packaging tools; validate tag/version/main SHA; build and test the full
+     artifact set; generate checksums, manifest, notices, SBOM, and provenance; publish only a complete
+     verified draft as a prerelease using least-privilege `GITHUB_TOKEN`.
+9. `ci(security): make dependency and dangerous-change policy blocking`
+   - Make cargo-audit, cargo-deny, Semgrep, shell/network/unsafe/dependency policy, code-owner review,
+     and PR-base comparisons blocking and self-tested.
+10. `test(android): record redistributable and permissioned workload validation`
+    - Record redacted Gradle, compiler/processor, resource/manifest/dex/test, ADB, Logcat, fallback,
+      exit-parity, and raw-recovery evidence from the exact candidate commit.
+11. `docs(launch): publish benchmarks, pilot guide, issue forms, and release notes`
+    - Publish reproducible direct/effective reduction, preservation, fallback, latency, and memory
+      evidence plus launch examples, limitations, privacy guidance, and the opt-in 3–5 developer pilot.
+12. `chore(branches): migrate stable references from master to main`
+    - Update repository text only during implementation. Actual GitHub ref/default migration remains a
+      separate explicitly approved administration operation.
+
+### Merge, branch, and release gates
+
+- The readiness branch targets `product/contextdroid-v0.1`, the current product integration line.
+  Current `origin/develop` is inherited post-v0.43 RTK development and must never be merged wholesale.
+- After a green reviewed product commit `R` and separate branch-administration approval, preserve
+  inherited refs under `archive/upstream-master-v0.43.0` and
+  `archive/upstream-develop-20260716`, create ContextDroid `develop` and `main` at `R`, set `main` as
+  default, and rerun every protected gate on exactly `R`.
+- Merge requires green raw fmt, locked tests, locked Clippy, locked release build, docs/help/brand,
+  Android and Claude smoke, security, and packaging dry run with resolved code-owner review.
+- Release additionally requires the real Android/device matrix, truthful integration support labels,
+  reviewed release notes/checksums/manifest/notices/SBOM/provenance, complete artifacts, protected
+  exact-main CI, and explicit authorization to create/push `v0.1.0-alpha.1` and publish assets.
+
+### Rollback contract
+
+- Revert the smallest milestone and rerun all gates; never move a published tag.
+- Failed publication may leave only a private draft and must never expose partial assets.
+- Installer rollback uses a pinned prior version or uninstall; integration rollback restores the
+  retained RTK backup; branch rollback uses archived refs only with explicit administration approval.
+- A confirmed missing root cause or raw-recovery failure pauses release/pilot and forces the affected
+  command family to raw behavior.
+
+### Exact first implementation task
+
+Use the existing failed CI evidence as RED. Add a fixed-offset Logcat cutoff contract that the current
+`DateTime<Local>` helper cannot accept, make the helper timezone-generic while production still passes
+`Local`, canonicalize temporary test roots on macOS, move the smoke sample to stable API 36, and rerun
+the previously failed focused tests before beginning parser-preservation work.
+
+### Implementation record — 2026-07-17
+
+Milestones 1–9 and the repository implementation portions of 10–12 are complete in the working
+tree; no commit, push, tag, release, asset upload, repository setting, or global agent configuration
+change was performed.
+
+- Cross-platform regressions: the Logcat cutoff helper accepts fixed offsets, production still uses
+  local time, test temporary roots are canonicalized for the macOS `/var` system symlink, and Android
+  smoke uses stable API/build-tools 36. Focused tests and the first full locked suite were green.
+- Preservation: the 30-family manifest now asserts typed root messages, every declared cause,
+  locations, application frames, task/module/variant, dependency coordinates, test assertion values,
+  details, omissions, confidence, never-worse decisions, durable IDs, exit/signal behavior, and exact
+  stdout/stderr recovery. KAPT failed-task banners are no longer misclassified as root diagnostics.
+- Quality: run metadata schema v2 uses nullable fixture preservation and exit parity. Schema-v1
+  asserted values normalize to unknown. Live parsers return `Result`; an observed parser error records
+  low confidence and returns raw output. Ordinary runtime paths never claim fixture success.
+- Integrations/public identity: disabled legacy `init`, its source/tests, inherited deployable hook
+  assets, and OpenClaw were removed. Internal Claude/Cursor hook processors remain hidden implementation
+  entry points for the verified lifecycle. Contribution policy is Apache-2.0 inbound=outbound; security
+  uses GitHub private reporting; install/disclaimer/support text is ContextDroid-specific.
+- Release: inherited release-please/next-release flows are disabled and the version manifest is
+  `0.1.0-alpha.1`. `release/targets.json` contract-tests five archives against workflow, installer,
+  and documentation. Packaging uses locked Rust gates, pinned cargo-deb 3.7.0 and cargo-generate-rpm
+  0.21.0, Rust 1.91 in Fedora, `SHA256SUMS`, local installer execution, built-in `GITHUB_TOKEN`, and
+  exact tag/version/main/SHA validation before the conditional publish job.
+- Security/branches: cargo-audit, cargo-deny, Semgrep, dangerous additions, PR-base comparison, and
+  CODEOWNERS policy are checked in. Stable documentation/workflow references use `main`; actual branch
+  administration remains unauthorized and undone.
+- Validation/launch: the public Apache-2.0 `android/architecture-samples` workload is pinned at
+  `ee66e1526b84c026615df032c705842b7d2a521f` in CI. A redacted internal pilot template, pilot guide,
+  issue forms, support/roadmap, draft release notes, and reproducible fixture benchmark are present.
+
+Local Android discovery found SDK platforms/build-tools 35 and 36, but only JDK 23 and an obsolete
+`sdkmanager` that fails with missing JAXB. A raw public-project Gradle attempt emitted no output before
+being stopped; it is explicitly recorded as inconclusive, not a pass. Clean JDK 17 CI and the
+permissioned internal pilot remain release blockers.
+
+Verification completed during implementation:
+
+- initial post-regression `cargo fmt --all --check`: green;
+- initial post-regression `cargo test --all --locked`: 2,284 passed, 8 ignored in the main suite plus
+  all integration targets green;
+- initial post-regression locked Clippy with warnings denied: green;
+- focused semantic contract, metadata, parser-error, release-contract, and security-contract tests:
+  green;
+- all-target compilation after removing legacy init/hook assets: green;
+- workflow YAML parse: green for every `.github/workflows/*.yml` file.
+
+Final raw fmt/test/Clippy/release-build gates must be rerun after the complete diff. External blockers
+remain exactly those listed in `docs/RELEASE_CHECKLIST.md`: new cross-platform CI and package dry run,
+clean public-project CI, permissioned internal validation, repository administration, and explicit
+publication approval.
+
+#### Final local gate result after dependency security remediation
+
+The blocking local audit found `RUSTSEC-2026-0190`, `RUSTSEC-2026-0204`,
+`RUSTSEC-2026-0194`, and `RUSTSEC-2026-0195`. No ignore was added. `anyhow` was upgraded to
+1.0.103, `crossbeam-epoch` to 0.9.20, and `quick-xml` to 0.41.0; the two small .NET XML call sites
+were migrated to the non-deprecated 0.41 APIs and all focused .NET tests passed.
+
+Final raw gates on the remediated lockfile:
+
+- `cargo fmt --all --check`: green;
+- `cargo test --all --locked`: green; main suite 2,131 passed, 9 ignored, plus fixture manifest
+  1/1, guard integration 6/6, release contract 2/2, and security contract 1/1;
+- `cargo clippy --all-targets --all-features --locked -- -D warnings`: green;
+- `cargo build --release --locked`: green in 3m55s;
+- `cargo audit --deny warnings`: green after remediation;
+- `cargo deny check advisories bans licenses sources`: green (duplicate-version notices are warnings
+  under the checked-in policy);
+- Git Bash documentation/stale-brand contract and shell syntax checks: green;
+- workflow YAML parse and release help contract: green;
+- `git diff --check`: green.
+
+The lower main-suite count is intentional: the disabled inherited `init` module and its large test
+surface were removed; one ignored reproducible benchmark emitter was added. This is not presented as
+equivalent functional coverage for the removed unsupported integrations.
+
+### Authorized distribution completion — 2026-07-17
+
+The maintainer authorized full repository administration and publication of the exact gated
+`v0.1.0-alpha.1` GitHub prerelease. The install experience is a checksum-verifying binary installer
+followed by one explicit Claude, Cursor, or Codex integration command. Alpha branch governance is
+CI-gated without mandatory human approval until a second collaborator exists.
+
+A one-time permissioned Android-project validation ran outside the tracked repository. The release
+binary completed unit-test/APK workloads and preserved the exact failing task, Kotlin location,
+identifier, compiler cause, raw fallback, and nonzero exit for a controlled compiler failure. No
+project name, URL, commit, source, logs, fixture, evidence artifact, or future CI dependency is
+retained in ContextDroid.
+
+Distribution completion adds a transactional Windows PowerShell installer, makes the Unix installer
+prerelease-aware, verifies checksum/path/version failure modes, uses current native release runners,
+generates a release manifest without self-referential checksums, tests DEB/RPM installation, and
+keeps GitHub publication private until every draft asset matches the verified output set. CI now
+supports exact-commit push/manual gates with immutable action pins and safe comparison bases.
+
+Local distribution-completion gates are green: `cargo fmt --all --check`; `cargo test --all
+--locked` with 2,132 passed and 9 intentionally ignored in the main suite plus all integration
+targets; warnings-denied all-feature Clippy; the locked optimized release build; three release
+contracts; two security-workflow contracts; Git Bash documentation and shell syntax; PowerShell
+installer syntax, success, checksum-tamper, and traversal tests; workflow YAML parsing; RustSec
+audit; cargo-deny advisories/bans/licenses/sources; and `git diff --check`. Semgrep is not installed
+on this host and remains a blocking pinned CI job.

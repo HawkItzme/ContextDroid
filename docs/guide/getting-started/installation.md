@@ -1,7 +1,24 @@
 # Installation
 
-No alpha release has been published. Binary installation and agent integration installation
-are separate operations.
+Binary installation and agent integration installation are separate operations.
+
+## Install the published alpha
+
+Linux and macOS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/HawkItzme/ContextDroid/main/install.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/HawkItzme/ContextDroid/main/install.ps1 | iex
+```
+
+The installers verify the selected archive against `SHA256SUMS` and validate its version before
+installation. Download and inspect the scripts first if remote pipe-to-shell installation does
+not match your security policy.
 
 ## Build from source now
 
@@ -19,7 +36,7 @@ contextdroid --version
 contextdroid --help
 ```
 
-## Configure an agent after building
+## Configure an agent after installation
 
 Preview is non-mutating. Install writes only the bounded ContextDroid entry:
 
@@ -38,15 +55,12 @@ Use `status` to inspect an integration and `uninstall` to remove it. Claude and 
 target user configuration when no root override is provided. Codex modifies only its bounded
 managed block in the selected project `AGENTS.md`.
 
-## Published packages later
+## Other packages
 
-`install.sh` and `Formula/contextdroid.rb` are packaging inputs, not proof that downloadable
-artifacts exist. The shell installer becomes usable only after versioned release archives and
-`checksums.txt` are published. Homebrew additionally requires real SHA-256 values, a selected
-downstream tap, and install/uninstall testing on supported macOS architectures.
+Direct archives, DEB, and RPM packages are attached to the GitHub prerelease. Homebrew requires a
+selected downstream tap and separate install/uninstall validation, so it is deferred.
 
-Homebrew may be excluded from the first alpha without blocking direct GitHub archives. Publishing
-any tag, release, or asset requires explicit approval.
+Homebrew is excluded from the first alpha without blocking direct GitHub installation.
 
 See the repository [README](../../../README.md), [integrations guide](../../INTEGRATIONS.md),
 and [release checklist](../../RELEASE_CHECKLIST.md).

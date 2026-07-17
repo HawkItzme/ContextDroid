@@ -6,8 +6,11 @@
 ## Test plan
 <!-- How did you verify this works? -->
 
-- [ ] `cargo fmt --all && cargo clippy --all-targets && cargo test`
+- [ ] `cargo fmt --all --check`
+- [ ] `cargo test --all --locked`
+- [ ] `cargo clippy --all-targets --all-features --locked -- -D warnings`
+- [ ] `cargo build --release --locked`
 - [ ] Manual testing: relevant `contextdroid <command>` output inspected
 
-> **Important:** All PRs must target the `develop` branch (not `master`).
-> See [CONTRIBUTING.md](../blob/master/CONTRIBUTING.md) for details.
+> **Important:** Contributions target `develop`. Only reviewed `develop` is promoted to `main`.
+> See [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md) for details.

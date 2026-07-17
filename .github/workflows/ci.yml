@@ -1,8 +1,11 @@
 name: CI
 
 on:
+  push:
+    branches: [develop, main]
   pull_request:
-    branches: [product/contextdroid-v0.1, develop, master]
+    branches: [product/contextdroid-v0.1, develop, main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -10,28 +13,38 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  COMPARISON_BASE: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
 
 jobs:
-  # ─── Fast gates (fail early, save CI minutes) ───
-
   check-test-presence:
     name: test presence
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          fetch-depth: 50
+          fetch-depth: 0
       - name: Check filter modules have tests
         run: |
-          git fetch origin "${{ github.base_ref }}" --depth=1 || true
-          bash scripts/check-test-presence.sh "origin/${{ github.base_ref }}"
+          set -euo pipefail
+          base="$COMPARISON_BASE"
+          if [[ -z "$base" || "$base" =~ ^0+$ ]] || ! git cat-file -e "$base^{commit}"; then
+            base=$(git rev-parse HEAD^)
+          fi
+          bash scripts/check-test-presence.sh "$base"
+
+  identity-contract:
+    name: docs and product identity
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - run: bash scripts/validate-docs.sh
 
   fmt:
     name: fmt
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.91.0
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@42520bdb3cb59f71dae6f8557f7056cf3a46c898 # 1.91.0
         with:
           components: rustfmt
       - run: cargo fmt --all -- --check
@@ -39,16 +52,14 @@ jobs:
   clippy:
     name: clippy
     needs: fmt
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.91.0
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@42520bdb3cb59f71dae6f8557f7056cf3a46c898 # 1.91.0
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --all-targets --all-features -- -D warnings
-
-  # ─── Parallel gates (all need code to compile) ───
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+      - run: cargo clippy --all-targets --all-features --locked -- -D warnings
 
   test:
     name: test (${{ matrix.os }})
@@ -57,145 +68,84 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-24.04, windows-2025, macos-15]
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.91.0
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test --all
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@42520bdb3cb59f71dae6f8557f7056cf3a46c898 # 1.91.0
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+      - run: cargo test --all --locked
 
   security:
     name: Security Scan
     needs: clippy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install cargo-audit
-        run: cargo install cargo-audit
-
-      - name: Cargo Audit (CVE check)
+      - uses: dtolnay/rust-toolchain@42520bdb3cb59f71dae6f8557f7056cf3a46c898 # 1.91.0
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+      - name: Resolve comparison base
         run: |
-          echo "## Security Scan Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Dependency Vulnerabilities" >> $GITHUB_STEP_SUMMARY
-          if cargo audit 2>&1 | tee audit.log; then
-            echo "No known vulnerabilities detected" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "Vulnerabilities found:" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            cat audit.log >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "::warning::Dependency vulnerabilities detected - review required"
+          set -euo pipefail
+          base="$COMPARISON_BASE"
+          if [[ -z "$base" || "$base" =~ ^0+$ ]] || ! git cat-file -e "$base^{commit}"; then
+            base=$(git rev-parse HEAD^)
           fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-
+          echo "SECURITY_BASE=$base" >> "$GITHUB_ENV"
+      - name: Install pinned security tools
+        run: |
+          cargo install --locked cargo-audit --version 0.22.2
+          cargo install --locked cargo-deny --version 0.20.2
+      - name: Cargo audit
+        run: cargo audit --deny warnings
+      - name: License, ban, and source policy
+        run: cargo deny check advisories bans licenses sources
       - name: Critical files check
         run: |
-          echo "### Critical Files Modified" >> $GITHUB_STEP_SUMMARY
-          CRITICAL=$(git diff --name-only origin/master...HEAD | grep -E "(runner|summary|tracking|init|pnpm_cmd|container)\.rs|Cargo\.toml|workflows/.*\.yml" || true)
-          if [ -n "$CRITICAL" ]; then
-            echo "**HIGH RISK**: The following critical files were modified:" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "$CRITICAL" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Required Actions:**" >> $GITHUB_STEP_SUMMARY
-            echo "- [ ] Manual security review by 2 maintainers" >> $GITHUB_STEP_SUMMARY
-            echo "- [ ] Verify no shell injection vectors" >> $GITHUB_STEP_SUMMARY
-            echo "- [ ] Check input validation remains intact" >> $GITHUB_STEP_SUMMARY
-            echo "::warning::Critical ContextDroid files modified - enhanced review required"
-          else
-            echo "No critical files modified" >> $GITHUB_STEP_SUMMARY
+          set -euo pipefail
+          CRITICAL=$(git diff --name-only "$SECURITY_BASE"...HEAD | grep -E '(runner|stream|run_store|secure_fs|integrations|migration)\.rs|Cargo\.(toml|lock)|install\.(sh|ps1)|release/|workflows/.*\.yml' || true)
+          if [[ -n "$CRITICAL" ]]; then
+            echo "::warning::Critical ContextDroid files modified; maintainer security review is required"
+            printf '%s\n' "$CRITICAL"
           fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-
       - name: Dangerous patterns scan
         run: |
-          echo "### Dangerous Code Patterns" >> $GITHUB_STEP_SUMMARY
-          PATTERNS=$(git diff origin/master...HEAD | grep -E "Command::new\(\"sh\"|Command::new\(\"bash\"|\.env\(\"LD_PRELOAD|\.env\(\"PATH|reqwest::|std::net::|TcpStream|UdpSocket|unsafe \{|\.unwrap\(\) |panic!\(|todo!\(|unimplemented!\(" || true)
-          if [ -n "$PATTERNS" ]; then
-            echo "**Potentially dangerous patterns detected:**" >> $GITHUB_STEP_SUMMARY
-            echo '```diff' >> $GITHUB_STEP_SUMMARY
-            echo "$PATTERNS" | head -30 >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Security Concerns:**" >> $GITHUB_STEP_SUMMARY
-            echo "$PATTERNS" | grep -q "Command::new" && echo "- Shell command execution detected" >> $GITHUB_STEP_SUMMARY || true
-            echo "$PATTERNS" | grep -q "\.env\(\"" && echo "- Environment variable manipulation" >> $GITHUB_STEP_SUMMARY || true
-            echo "$PATTERNS" | grep -q "reqwest::\|std::net::\|TcpStream\|UdpSocket" && echo "- Network operations added" >> $GITHUB_STEP_SUMMARY || true
-            echo "$PATTERNS" | grep -q "unsafe" && echo "- Unsafe code blocks" >> $GITHUB_STEP_SUMMARY || true
-            echo "$PATTERNS" | grep -q "\.unwrap\(\)\|panic!\(" && echo "- Panic-inducing code" >> $GITHUB_STEP_SUMMARY || true
-            echo "::warning::Dangerous code patterns detected - manual review required"
-          else
-            echo "No dangerous patterns detected" >> $GITHUB_STEP_SUMMARY
+          set -euo pipefail
+          PATTERNS=$(git diff -U0 "$SECURITY_BASE"...HEAD -- '*.rs' | grep '^+' | grep -E 'Command::new\("sh"|Command::new\("bash"|\.env\("LD_PRELOAD|\.env\("PATH|reqwest::|std::net::|TcpStream|UdpSocket|unsafe \{|todo!\(|unimplemented!\(' || true)
+          if [[ -n "$PATTERNS" ]]; then
+            printf '%s\n' "$PATTERNS" | head -30
+            echo "::error::Dangerous code patterns require security review and an approved narrow policy exception"
+            exit 1
           fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-      - name: New dependencies check
+      - name: New dependencies report
         run: |
-          echo "### Dependencies Changes" >> $GITHUB_STEP_SUMMARY
-          if git diff origin/master...HEAD Cargo.toml | grep -E "^\+.*=" | grep -v "^\+\+\+" > new_deps.txt; then
-            echo "**New dependencies added:**" >> $GITHUB_STEP_SUMMARY
-            echo '```toml' >> $GITHUB_STEP_SUMMARY
-            cat new_deps.txt >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Required Actions:**" >> $GITHUB_STEP_SUMMARY
-            echo "- [ ] Audit each new dependency on crates.io" >> $GITHUB_STEP_SUMMARY
-            echo "- [ ] Check maintainer reputation and download counts" >> $GITHUB_STEP_SUMMARY
-            echo "- [ ] Verify no typosquatting (e.g., 'reqwest' vs 'request')" >> $GITHUB_STEP_SUMMARY
-            echo "::warning::New dependencies require supply chain audit"
-          else
-            echo "No new dependencies added" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-      - name: Clippy security lints
-        run: |
-          echo "### Clippy Security Lints" >> $GITHUB_STEP_SUMMARY
-          if cargo clippy --all-targets -- -W clippy::unwrap_used -W clippy::panic -W clippy::expect_used 2>&1 | tee clippy.log | grep -E "warning:|error:"; then
-            echo "Security-related lints triggered:" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            grep -E "warning:|error:" clippy.log | head -20 >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "::warning::Clippy security lints failed"
-          else
-            echo "All security lints passed" >> $GITHUB_STEP_SUMMARY
-          fi
-
-      - name: Summary verdict
-        run: |
-          echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Security Review Verdict" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**This is an automated security scan. A human maintainer must:**" >> $GITHUB_STEP_SUMMARY
-          echo "1. Review all warnings above" >> $GITHUB_STEP_SUMMARY
-          echo "2. Verify PR intent matches actual code changes" >> $GITHUB_STEP_SUMMARY
-          echo "3. Check for subtle backdoors or logic bombs" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**For high-risk PRs (critical files modified):**" >> $GITHUB_STEP_SUMMARY
-          echo "- Require approval from 2 maintainers" >> $GITHUB_STEP_SUMMARY
-          echo "- Test in isolated environment before merge" >> $GITHUB_STEP_SUMMARY
+          set -euo pipefail
+          git diff "$SECURITY_BASE"...HEAD Cargo.toml | grep -E '^\+.*=' | grep -v '^\+\+\+' || true
 
   semgrep:
     name: semgrep security scan
     needs: clippy
-    runs-on: ubuntu-latest
-    container:
-      image: semgrep/semgrep
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
-      - run: semgrep scan --config .semgrep.yml --baseline-commit ${{ github.event.pull_request.base.sha }} --error
+      - name: Resolve comparison base
+        run: |
+          set -euo pipefail
+          base="$COMPARISON_BASE"
+          if [[ -z "$base" || "$base" =~ ^0+$ ]] || ! git cat-file -e "$base^{commit}"; then
+            base=$(git rev-parse HEAD^)
+          fi
+          echo "SEMGREP_BASE=$base" >> "$GITHUB_ENV"
+      - name: Install the pinned Semgrep runtime
+        run: |
+          pipx install semgrep==1.125.0
+          # Semgrep 1.125 imports pkg_resources; fresh pipx environments no
+          # longer bundle it, so pin the last compatible setuptools release.
+          pipx inject --force semgrep setuptools==80.9.0
+      - run: semgrep scan --config .semgrep.yml --baseline-commit "$SEMGREP_BASE" --error
 
   release-build:
     name: release build (${{ matrix.os }})
@@ -204,212 +154,78 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-24.04, windows-2025, macos-15]
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.91.0
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@42520bdb3cb59f71dae6f8557f7056cf3a46c898 # 1.91.0
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+      - run: cargo build --release --locked
 
   docs-contract:
     name: docs and help contract
     needs: clippy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.91.0
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@42520bdb3cb59f71dae6f8557f7056cf3a46c898 # 1.91.0
       - run: bash scripts/validate-docs.sh
-      - run: cargo run --quiet -- --help > help.txt
-      - run: grep -q "Android Logcat" help.txt && grep -q "canonical local analytics" help.txt
+      - run: cargo run --quiet --locked -- --help > help.txt
+      - run: grep -q 'Android Logcat' help.txt && grep -q 'canonical local analytics' help.txt
 
   android-smoke:
     name: Android Gradle smoke
     needs: clippy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
         with:
           distribution: temurin
           java-version: 17
-      - uses: android-actions/setup-android@v3
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
         with:
           gradle-version: 9.5.0
-      - uses: dtolnay/rust-toolchain@1.91.0
-      - uses: Swatinem/rust-cache@v2
-      - run: sdkmanager "platforms;android-37" "build-tools;36.0.0"
-      - run: cargo build --release
+      - uses: dtolnay/rust-toolchain@42520bdb3cb59f71dae6f8557f7056cf3a46c898 # 1.91.0
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+      - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - run: cargo build --release --locked
       - run: bash scripts/smoke-android-linux.sh
+
+  public-android-validation:
+    name: Public Android project validation
+    needs: clippy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+      - uses: dtolnay/rust-toolchain@42520bdb3cb59f71dae6f8557f7056cf3a46c898 # 1.91.0
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - run: cargo build --release --locked
+      - name: Checkout pinned Apache-2.0 Android sample
+        run: |
+          git clone --filter=blob:none https://github.com/android/architecture-samples.git "$RUNNER_TEMP/architecture-samples"
+          git -C "$RUNNER_TEMP/architecture-samples" checkout ee66e1526b84c026615df032c705842b7d2a521f
+      - name: Run raw and ContextDroid validation
+        run: bash scripts/validate-architecture-samples-linux.sh "$RUNNER_TEMP/architecture-samples" "$PWD/target/release/contextdroid" "$RUNNER_TEMP/contextdroid-validation"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: public-android-validation
+          path: ${{ runner.temp }}/contextdroid-validation
+          if-no-files-found: error
 
   claude-linux-smoke:
     name: Claude integration and compact git status smoke
     needs: clippy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.91.0
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@42520bdb3cb59f71dae6f8557f7056cf3a46c898 # 1.91.0
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+      - run: cargo build --release --locked
       - run: bash scripts/smoke-claude-linux.sh
-
-  # Inherited secret-backed AI review is retained only as historical workflow context.
-  # The deterministic docs-contract job above is the release gate.
-
-  doc-review:
-    name: doc review
-    if: ${{ false }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Gather PR context
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          PR_NUM=${{ github.event.pull_request.number }}
-          gh pr diff "$PR_NUM" --name-only > changed_files.txt
-          gh pr diff "$PR_NUM" | head -c 12000 > diff.txt
-          gh pr view "$PR_NUM" --json title,body --jq '"PR Title: \(.title)\nPR Description: \(.body)"' > pr_info.txt
-
-      - name: Build prompt files
-        run: |
-          # System prompt
-          cat <<'EOF' > system_prompt.txt
-          You are a documentation reviewer for the ContextDroid project.
-          You will receive the project's CONTRIBUTING.md (which contains the documentation rules), the PR info, changed files, and diff.
-          Your job: based ONLY on the documentation rules in CONTRIBUTING.md, decide if the PR includes the required documentation updates.
-
-          IMPORTANT:
-          - CI/CD changes, test-only changes, and refactors with no user-facing impact do NOT require doc updates.
-          - Be practical, not pedantic. Small obvious fixes don't need CHANGELOG entries.
-          - Only flag missing docs when there is a clear user-facing change.
-          EOF
-
-          # User prompt: concatenate files (no printf, no variable expansion issues)
-          {
-            cat pr_info.txt
-            echo ""
-            echo "---"
-            echo "CONTRIBUTING.md:"
-            cat CONTRIBUTING.md
-            echo ""
-            echo "---"
-            echo "Changed files:"
-            cat changed_files.txt
-            echo ""
-            echo "---"
-            echo "Diff (may be truncated):"
-            cat diff.txt
-          } > user_prompt.txt
-
-      - name: AI documentation review
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.RTK_DOCS_ANTHROPIC_KEY }}
-        run: |
-          echo "## Documentation Review (AI)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "::warning::ANTHROPIC_API_KEY not configured — skipping AI doc review"
-            echo "Skipped: ANTHROPIC_API_KEY secret not configured." >> $GITHUB_STEP_SUMMARY
-            exit 0
-          fi
-
-          echo "::group::Preparing API request"
-          echo "System prompt: $(wc -c < system_prompt.txt) bytes"
-          echo "User prompt: $(wc -c < user_prompt.txt) bytes"
-          SYSTEM_JSON=$(jq -Rs . < system_prompt.txt)
-          USER_JSON=$(jq -Rs . < user_prompt.txt)
-          echo "::endgroup::"
-
-          echo "::group::Calling Claude API (claude-sonnet-4-6)"
-          RESPONSE=$(curl -s -w "\n%{http_code}" https://api.anthropic.com/v1/messages \
-            -H "content-type: application/json" \
-            -H "x-api-key: $ANTHROPIC_API_KEY" \
-            -H "anthropic-version: 2023-06-01" \
-            -d "{
-              \"model\": \"claude-sonnet-4-6\",
-              \"max_tokens\": 1024,
-              \"messages\": [{\"role\": \"user\", \"content\": $USER_JSON}],
-              \"system\": $SYSTEM_JSON,
-              \"output_config\": {
-                \"format\": {
-                  \"type\": \"json_schema\",
-                  \"schema\": {
-                    \"type\": \"object\",
-                    \"properties\": {
-                      \"status\": {\"type\": \"string\", \"enum\": [\"PASS\", \"FAIL\"]},
-                      \"reasoning\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}},
-                      \"files_to_update\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}
-                    },
-                    \"required\": [\"status\", \"reasoning\", \"files_to_update\"],
-                    \"additionalProperties\": false
-                  }
-                }
-              }
-            }")
-
-          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-          BODY=$(echo "$RESPONSE" | sed '$d')
-          echo "HTTP status: $HTTP_CODE"
-          echo "::endgroup::"
-
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "::warning::Claude API returned HTTP $HTTP_CODE — skipping doc review"
-            echo "Skipped: API error (HTTP $HTTP_CODE)" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "$BODY" | head -10 >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            exit 0
-          fi
-
-          # Parse structured JSON response
-          REVIEW_JSON=$(echo "$BODY" | jq -r '.content[0].text // empty')
-
-          if [ -z "$REVIEW_JSON" ]; then
-            echo "::warning::Empty response from Claude API — skipping doc review"
-            echo "Skipped: empty API response" >> $GITHUB_STEP_SUMMARY
-            echo "Raw response:"
-            echo "$BODY" | head -20
-            exit 0
-          fi
-
-          echo "::group::AI Review Result"
-          echo "$REVIEW_JSON" | jq .
-          echo "::endgroup::"
-
-          STATUS=$(echo "$REVIEW_JSON" | jq -r '.status')
-          REASONING=$(echo "$REVIEW_JSON" | jq -r '.reasoning[]' 2>/dev/null)
-          FILES=$(echo "$REVIEW_JSON" | jq -r '.files_to_update[]' 2>/dev/null)
-
-          echo "### Verdict: ${STATUS}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          if [ -n "$REASONING" ]; then
-            echo "**Reasoning:**" >> $GITHUB_STEP_SUMMARY
-            echo "$REASONING" | while IFS= read -r line; do
-              echo "- $line" >> $GITHUB_STEP_SUMMARY
-            done
-            echo "" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          if [ "$STATUS" = "FAIL" ] && [ -n "$FILES" ]; then
-            echo "**Files to update:**" >> $GITHUB_STEP_SUMMARY
-            echo "$FILES" | while IFS= read -r f; do
-              echo "- \`$f\`" >> $GITHUB_STEP_SUMMARY
-            done
-            echo "" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          if [ "$STATUS" = "PASS" ]; then
-            echo "Documentation review passed."
-          elif [ "$STATUS" = "FAIL" ]; then
-            echo "::error::Documentation review failed — see summary for details"
-            exit 1
-          else
-            echo "::warning::Unexpected status '${STATUS}' — skipping"
-            echo "Unexpected AI response status: ${STATUS}" >> $GITHUB_STEP_SUMMARY
-          fi

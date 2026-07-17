@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "targets": [
+    {
+      "rust_target": "x86_64-unknown-linux-musl",
+      "asset": "contextdroid-x86_64-unknown-linux-musl.tar.gz",
+      "archive": "tar.gz",
+      "installer": true
+    },
+    {
+      "rust_target": "aarch64-unknown-linux-gnu",
+      "asset": "contextdroid-aarch64-unknown-linux-gnu.tar.gz",
+      "archive": "tar.gz",
+      "installer": true
+    },
+    {
+      "rust_target": "x86_64-apple-darwin",
+      "asset": "contextdroid-x86_64-apple-darwin.tar.gz",
+      "archive": "tar.gz",
+      "installer": true
+    },
+    {
+      "rust_target": "aarch64-apple-darwin",
+      "asset": "contextdroid-aarch64-apple-darwin.tar.gz",
+      "archive": "tar.gz",
+      "installer": true
+    },
+    {
+      "rust_target": "x86_64-pc-windows-msvc",
+      "asset": "contextdroid-x86_64-pc-windows-msvc.zip",
+      "archive": "zip",
+      "installer": true
+    }
+  ]
+}

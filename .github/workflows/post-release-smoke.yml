@@ -1,0 +1,61 @@
+name: Post-release install smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published ContextDroid tag to install
+        required: true
+        default: v0.1.0-alpha.1
+
+permissions:
+  contents: read
+
+jobs:
+  install-unix:
+    name: Install ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x86_64
+            os: ubuntu-24.04
+          - label: Linux ARM64
+            os: ubuntu-24.04-arm
+          - label: macOS Intel
+            os: macos-15-intel
+          - label: macOS ARM64
+            os: macos-15
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Install from the public release
+        env:
+          CONTEXTDROID_VERSION: ${{ inputs.tag }}
+          INSTALL_DIR: ${{ runner.temp }}/contextdroid-bin
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location \
+            https://raw.githubusercontent.com/HawkItzme/ContextDroid/main/install.sh \
+            --output "$RUNNER_TEMP/install.sh"
+          sh "$RUNNER_TEMP/install.sh"
+          "$INSTALL_DIR/contextdroid" --version | grep -F "contextdroid ${CONTEXTDROID_VERSION#v}"
+
+  install-windows:
+    name: Install Windows x86_64
+    runs-on: windows-2025
+    steps:
+      - name: Install from the public release
+        shell: pwsh
+        env:
+          CONTEXTDROID_VERSION: ${{ inputs.tag }}
+          CONTEXTDROID_INSTALL_DIR: ${{ runner.temp }}\contextdroid-bin
+          CONTEXTDROID_NO_PATH_UPDATE: "1"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/HawkItzme/ContextDroid/main/install.ps1' -OutFile "$env:RUNNER_TEMP\install.ps1"
+          & "$env:RUNNER_TEMP\install.ps1"
+          $version = & "$env:CONTEXTDROID_INSTALL_DIR\contextdroid.exe" --version
+          $expected = "contextdroid $($env:CONTEXTDROID_VERSION.TrimStart('v'))"
+          if ($version -notlike "*$expected*") {
+            throw "Unexpected installed version: $version"
+          }
