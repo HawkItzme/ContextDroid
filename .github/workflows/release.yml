@@ -155,6 +155,16 @@ jobs:
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
       - run: cargo install --locked cargo-deb --version 3.7.0
       - run: cargo deb --locked
+      - name: Normalize DEB release filename
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+          source=$(find target/debian -maxdepth 1 -type f -name '*.deb' -print -quit)
+          test -n "$source"
+          asset="target/debian/contextdroid_${VERSION}-1_amd64.deb"
+          if [ "$source" != "$asset" ]; then
+            mv "$source" "$asset"
+          fi
       - name: Install, execute, and uninstall DEB
         run: |
           sudo dpkg -i target/debian/*.deb
@@ -183,10 +193,17 @@ jobs:
       - run: cargo build --release --locked
       - name: Build RPM with normalized prerelease metadata
         run: |
+          set -euo pipefail
           VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
           RPM_VERSION=$(printf '%s' "$VERSION" | sed 's/-/~/; s/-/_/g')
           cargo generate-rpm --set-metadata "version = \"$RPM_VERSION\""
           rpm -qp --qf '%{VERSION}\n' target/generate-rpm/*.rpm | grep -Fx "$RPM_VERSION"
+          source=$(find target/generate-rpm -maxdepth 1 -type f -name '*.rpm' -print -quit)
+          test -n "$source"
+          asset="target/generate-rpm/contextdroid-${VERSION}-1.x86_64.rpm"
+          if [ "$source" != "$asset" ]; then
+            mv "$source" "$asset"
+          fi
       - name: Install, execute, and uninstall RPM
         run: |
           rpm -i target/generate-rpm/*.rpm
@@ -213,6 +230,10 @@ jobs:
           set -euo pipefail
           mkdir release-output
           find artifacts -type f -exec cp {} release-output/ \;
+          VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+          test -f "release-output/contextdroid_${VERSION}-1_amd64.deb"
+          test -f "release-output/contextdroid-${VERSION}-1.x86_64.rpm"
+          test -z "$(find release-output -maxdepth 1 -type f -name '*~*' -print -quit)"
           while IFS= read -r asset; do
             test -f "release-output/$asset"
           done < <(jq -r '.targets[].asset' release/targets.json)
@@ -226,6 +247,10 @@ jobs:
           for entry in contextdroid.exe LICENSE UPSTREAM.md THIRD_PARTY_NOTICES.md; do
             grep -Fxq "$entry" "$RUNNER_TEMP/windows-archive-entries.txt"
           done
+      - name: Enforce GitHub-safe package filenames
+        run: |
+          set -euo pipefail
+          test -z "$(find release-output -maxdepth 1 -type f -name '*~*' -print -quit)"
       - name: Generate SBOM, release manifest, and checksums
         env:
           RELEASE_TAG: ${{ inputs.tag }}
