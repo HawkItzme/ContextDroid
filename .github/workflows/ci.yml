@@ -144,7 +144,7 @@ jobs:
           pipx install semgrep==1.125.0
           # Semgrep 1.125 imports pkg_resources; fresh pipx environments no
           # longer bundle it, so pin the last compatible setuptools release.
-          pipx inject semgrep setuptools==80.9.0
+          pipx inject --force semgrep setuptools==80.9.0
       - run: semgrep scan --config .semgrep.yml --baseline-commit "$SEMGREP_BASE" --error
 
   release-build:

@@ -13,7 +13,7 @@ fn security_policy_is_blocking_and_uses_the_actual_pr_base() {
     assert!(ci.contains("github.event.pull_request.base.sha"));
     assert!(!ci.contains("origin/master"));
     assert!(ci.contains("semgrep scan --config .semgrep.yml"));
-    assert!(ci.contains("pipx inject semgrep setuptools==80.9.0"));
+    assert!(ci.contains("pipx inject --force semgrep setuptools==80.9.0"));
     assert!(ci.contains("--error"));
     assert!(ci.contains("Dangerous code patterns require security review"));
     assert!(owners.contains("src/core/runner.rs"));
