@@ -1,6 +1,6 @@
 use crate::diagnostics::{
     assess_confidence, Cause, DiagnosticEvent, DiagnosticKind, DiagnosticRun, OmissionReport,
-    ParseConfidence, ParserIdentity, Severity, SourceLocation,
+    ParseConfidence, ParserIdentity, Severity, SourceLocation, TestAssertion,
 };
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -17,6 +17,10 @@ lazy_static! {
     static ref EXECUTION_TASK: Regex =
         Regex::new(r#"^Execution failed for task ['"](:[^'"]+)['"]\.$"#).unwrap();
     static ref VARIANT: Regex = Regex::new(r"(?i)(debug|release)").unwrap();
+    static ref DEPENDENCY_COORDINATE: Regex =
+        Regex::new(r"\b([A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.+\-]+)\b").unwrap();
+    static ref TEST_ASSERTION: Regex =
+        Regex::new(r"(?i)expected:<(.+?)>\s+but was:<(.+?)>").unwrap();
 }
 
 #[cfg(test)]
@@ -51,6 +55,8 @@ pub fn parse_with_config(
         }),
         stack_config,
     );
+    let dependency_coordinates = extract_dependency_coordinates(raw);
+    let test_assertion = extract_test_assertion(raw);
 
     let mut events = Vec::new();
     for (raw_line, line) in raw.lines().enumerate() {
@@ -58,6 +64,11 @@ pub fn parse_with_config(
             continue;
         };
         let (location, message) = parse_location_and_message(line);
+        let is_dependency = kind == DiagnosticKind::DependencyResolution;
+        let is_test = matches!(
+            kind,
+            DiagnosticKind::UnitTest | DiagnosticKind::InstrumentationTest
+        );
         events.push(DiagnosticEvent {
             kind,
             severity: if line.to_ascii_lowercase().contains("warning") {
@@ -73,6 +84,16 @@ pub fn parse_with_config(
             location,
             causes: causes.clone(),
             frames: Vec::new(),
+            dependency_coordinates: if is_dependency {
+                dependency_coordinates.clone()
+            } else {
+                Vec::new()
+            },
+            test_assertion: if is_test {
+                test_assertion.clone()
+            } else {
+                None
+            },
             details: BTreeMap::new(),
             raw_line: Some(raw_line),
         });
@@ -99,6 +120,8 @@ pub fn parse_with_config(
             location: None,
             causes,
             frames: Vec::new(),
+            dependency_coordinates,
+            test_assertion,
             details: BTreeMap::new(),
             raw_line: raw.lines().position(|line| line.trim() == root),
         });
@@ -172,6 +195,9 @@ pub fn parse_with_config(
 }
 
 pub fn classify_line(line: &str) -> Option<DiagnosticKind> {
+    if FAILED_TASK.is_match(line.trim()) {
+        return None;
+    }
     let lower = line.to_ascii_lowercase();
     if lower.contains("[ksp]") || lower.contains("symbol processing") {
         Some(DiagnosticKind::Ksp)
@@ -276,6 +302,24 @@ fn parse_location_and_message(line: &str) -> (Option<SourceLocation>, String) {
         .unwrap_or(line.trim())
         .to_string();
     (None, message)
+}
+
+fn extract_dependency_coordinates(raw: &str) -> Vec<String> {
+    let mut coordinates = Vec::new();
+    for captures in DEPENDENCY_COORDINATE.captures_iter(raw) {
+        let coordinate = captures[1].to_string();
+        if !coordinates.contains(&coordinate) {
+            coordinates.push(coordinate);
+        }
+    }
+    coordinates
+}
+
+fn extract_test_assertion(raw: &str) -> Option<TestAssertion> {
+    TEST_ASSERTION.captures(raw).map(|captures| TestAssertion {
+        expected: captures[1].to_string(),
+        actual: captures[2].to_string(),
+    })
 }
 
 #[cfg(test)]
@@ -437,5 +481,29 @@ BUILD SUCCESSFUL in 1s
             crate::diagnostics::FrameOwnership::Unknown
         );
         assert_eq!(unknown.confidence, ParseConfidence::Medium);
+    }
+
+    #[test]
+    fn dependency_and_test_assertion_evidence_is_structured() {
+        let dependency = parse(
+            "./gradlew assembleDebug",
+            "> Task :app:mergeDebugNativeLibs FAILED\nCould not resolve com.example:missing-library:1.0.0\n",
+            1,
+            "run",
+        );
+        assert_eq!(
+            dependency.events[0].dependency_coordinates,
+            vec!["com.example:missing-library:1.0.0"]
+        );
+
+        let test = parse(
+            "./gradlew testDebugUnitTest",
+            "> Task :app:testDebugUnitTest FAILED\ncom.example.app.WidgetTest > rendersExpectedState FAILED\nexpected:<ready> but was:<loading>\n",
+            1,
+            "run",
+        );
+        let assertion = test.events[0].test_assertion.as_ref().unwrap();
+        assert_eq!(assertion.expected, "ready");
+        assert_eq!(assertion.actual, "loading");
     }
 }

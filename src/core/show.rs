@@ -88,7 +88,7 @@ mod tests {
 
     fn stored_run() -> (tempfile::TempDir, RunStore, RunId) {
         let temp = tempfile::tempdir().unwrap();
-        let store = RunStore::new(temp.path().to_path_buf());
+        let store = RunStore::new(temp.path().canonicalize().unwrap());
         let mut run = store
             .start(RunStart {
                 command: "./gradlew lintDebug".into(),

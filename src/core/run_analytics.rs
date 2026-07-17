@@ -365,9 +365,12 @@ impl RunAnalytics {
         record.recovery_requested = metadata.recovery_requested;
         record.parser_error = metadata.parser_error;
         record.detectable_rerun = metadata.detectable_rerun;
-        // v1 values were asserted rather than measured; preserve them as unknown.
-        record.exit_code_parity = None;
-        record.fixture_preservation = None;
+        record.exit_code_parity = (metadata.schema_version >= 2)
+            .then_some(metadata.exit_code_parity)
+            .flatten();
+        record.fixture_preservation = (metadata.schema_version >= 2)
+            .then_some(metadata.fixture_preservation)
+            .flatten();
         record.run_id = Some(metadata.run_id.as_str().to_string());
         record.omission_preserved = metadata.omission_preserved;
         record.omission_collapsed = metadata.omission_collapsed;
@@ -1352,8 +1355,8 @@ mod tests {
             omission_collapsed: 7,
             parser_error: false,
             detectable_rerun: false,
-            exit_code_parity: true,
-            fixture_preservation: true,
+            exit_code_parity: Some(true),
+            fixture_preservation: Some(true),
         }
     }
 

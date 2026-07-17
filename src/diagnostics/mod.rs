@@ -95,6 +95,12 @@ pub struct ClassifiedFrame {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TestAssertion {
+    pub expected: String,
+    pub actual: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiagnosticEvent {
     pub kind: DiagnosticKind,
     pub severity: Severity,
@@ -106,6 +112,10 @@ pub struct DiagnosticEvent {
     pub location: Option<SourceLocation>,
     pub causes: Vec<Cause>,
     pub frames: Vec<ClassifiedFrame>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependency_coordinates: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test_assertion: Option<TestAssertion>,
     pub details: BTreeMap<String, String>,
     /// Zero-based source line used only to attach medium-confidence raw context.
     pub raw_line: Option<usize>,
@@ -209,6 +219,9 @@ pub fn render(run: &DiagnosticRun, raw: &str, mode: OutputMode, context_lines: u
         if let Some(variant) = &event.variant {
             let _ = writeln!(output, "Variant: {variant}");
         }
+        if let Some(error_type) = &event.error_type {
+            let _ = writeln!(output, "Error type: {error_type}");
+        }
         if let Some(location) = &event.location {
             let _ = write!(output, "Location: {}:{}", location.file, location.line);
             if let Some(column) = location.column {
@@ -218,6 +231,16 @@ pub fn render(run: &DiagnosticRun, raw: &str, mode: OutputMode, context_lines: u
         }
         for cause in &event.causes {
             let _ = writeln!(output, "Caused by: {}", cause.message);
+        }
+        for coordinate in &event.dependency_coordinates {
+            let _ = writeln!(output, "Dependency: {coordinate}");
+        }
+        if let Some(assertion) = &event.test_assertion {
+            let _ = writeln!(output, "Expected: {}", assertion.expected);
+            let _ = writeln!(output, "Actual: {}", assertion.actual);
+        }
+        for (key, value) in &event.details {
+            let _ = writeln!(output, "{key}: {value}");
         }
         for frame in &event.frames {
             let _ = writeln!(output, "  {}", frame.text);
@@ -251,6 +274,12 @@ pub fn render_checked(
         return RenderedDiagnostic {
             output: raw.to_string(),
             decision: NeverWorseDecision::RawLowConfidence,
+        };
+    }
+    if run.events.is_empty() {
+        return RenderedDiagnostic {
+            output: raw.to_string(),
+            decision: NeverWorseDecision::RawIncompleteEvidence,
         };
     }
     if run
@@ -341,6 +370,8 @@ mod tests {
                 }),
                 causes: Vec::new(),
                 frames: Vec::new(),
+                dependency_coordinates: Vec::new(),
+                test_assertion: None,
                 details: Default::default(),
                 raw_line: Some(2),
             }],

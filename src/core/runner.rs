@@ -176,7 +176,7 @@ fn finalize_durable(
         "{\"schema_version\":1,\"events\":[]}",
         FinalizeDetails {
             parser: Some("legacy".to_string()),
-            confidence: "unvalidated".to_string(),
+            confidence: None,
             raw_fallback,
             ..FinalizeDetails::default()
         },
@@ -225,7 +225,7 @@ pub fn run_diagnostic<F>(
     opts: RunOptions<'_>,
 ) -> Result<i32>
 where
-    F: Fn(&str, i32, &str) -> crate::diagnostics::DiagnosticRun,
+    F: Fn(&str, i32, &str) -> Result<crate::diagnostics::DiagnosticRun>,
 {
     let cmd_label = format!("{} {}", tool_name, args_display);
     let Some((run, outcome, raw_stdout, raw_stderr)) = capture_durably(
@@ -251,7 +251,17 @@ where
 
     let exit_code = outcome.shell_exit_code();
     let raw = format!("{}{}", raw_stdout, raw_stderr);
-    let diagnostic = parser(&raw, exit_code, run.id().as_str());
+    let parsed = parser(&raw, exit_code, run.id().as_str());
+    let diagnostic = match parsed {
+        Ok(diagnostic) => diagnostic,
+        Err(error) => {
+            let (diagnostics_json, details) = observed_parser_failure(tool_name, &error)?;
+            finalize_durable_artifacts(Some(run), outcome, &raw, &diagnostics_json, details);
+            print!("{}", raw_stdout);
+            eprint!("{}", raw_stderr);
+            return Ok(exit_code);
+        }
+    };
     let confidence = match diagnostic.confidence {
         crate::diagnostics::ParseConfidence::High => "high",
         crate::diagnostics::ParseConfidence::Medium => "medium",
@@ -280,13 +290,14 @@ where
         &diagnostics_json,
         FinalizeDetails {
             parser: Some(parser_name),
-            confidence: confidence.to_string(),
+            confidence: Some(confidence.to_string()),
             raw_fallback,
             never_worse_fallback,
             parser_error: false,
             omission_preserved,
             omission_collapsed,
-            fixture_preservation: true,
+            fixture_preservation: None,
+            exit_code_parity: None,
         },
     );
 
@@ -297,6 +308,27 @@ where
         print!("{}", shown);
     }
     Ok(exit_code)
+}
+
+fn observed_parser_failure(
+    parser: &str,
+    error: &anyhow::Error,
+) -> Result<(String, FinalizeDetails)> {
+    let diagnostics_json = serde_json::to_string_pretty(&serde_json::json!({
+        "schema_version": 1,
+        "parser_error": error.to_string(),
+        "events": []
+    }))?;
+    Ok((
+        diagnostics_json,
+        FinalizeDetails {
+            parser: Some(parser.to_string()),
+            confidence: Some("low".into()),
+            raw_fallback: true,
+            parser_error: true,
+            ..Default::default()
+        },
+    ))
 }
 
 fn run_captured_filter<F>(
@@ -479,7 +511,10 @@ pub fn run(
                 stream::run_streaming(&mut cmd, StdinMode::Inherit, FilterMode::Passthrough)
                     .with_context(|| format!("Failed to run {}", tool_name))?;
 
-            timer.track_passthrough(&cmd_label, &format!("rtk {} (passthrough)", cmd_label));
+            timer.track_passthrough(
+                &cmd_label,
+                &format!("contextdroid {} (passthrough)", cmd_label),
+            );
             Ok(result.exit_code)
         }
     }
@@ -553,4 +588,24 @@ pub fn run_streamed(
         RunMode::Streamed(filter),
         opts,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn observed_parser_error_is_low_confidence_raw_fallback_and_not_fixture_truth() {
+        let (json, details) =
+            observed_parser_failure("android-gradle", &anyhow::anyhow!("synthetic parse error"))
+                .unwrap();
+        let artifact: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(artifact["parser_error"], "synthetic parse error");
+        assert!(details.parser_error);
+        assert!(details.raw_fallback);
+        assert_eq!(details.confidence.as_deref(), Some("low"));
+        assert_eq!(details.fixture_preservation, None);
+        assert_eq!(details.exit_code_parity, None);
+    }
 }

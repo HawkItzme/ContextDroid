@@ -1,32 +1,201 @@
 [
-  {"file":"gradle_success.txt","parser":"gradle","kind":null,"contains":["BUILD SUCCESSFUL"],"exit_code":0},
-  {"file":"kotlin_failure.txt","parser":"gradle","kind":"KotlinCompiler","contains":["Unresolved reference"],"exit_code":1},
-  {"file":"java_failure.txt","parser":"gradle","kind":"JavaCompiler","contains":["cannot find symbol"],"exit_code":1},
-  {"file":"ksp_failure.txt","parser":"gradle","kind":"Ksp","contains":["[ksp]"],"exit_code":1},
-  {"file":"kapt_failure.txt","parser":"gradle","kind":"Kapt","contains":["kapt"],"exit_code":1},
-  {"file":"compose_failure.txt","parser":"gradle","kind":"ComposeCompiler","contains":["Composable"],"exit_code":1},
-  {"file":"aapt2_failure.txt","parser":"gradle","kind":"Aapt2","contains":["resource"],"exit_code":1},
-  {"file":"resource_merge_failure.txt","parser":"gradle","kind":"ResourceMerge","contains":["resources"],"exit_code":1},
-  {"file":"manifest_failure.txt","parser":"gradle","kind":"ManifestMerger","contains":["Manifest merger failed"],"exit_code":1},
-  {"file":"dependency_failure.txt","parser":"gradle","kind":"DependencyResolution","contains":["Could not resolve"],"exit_code":1},
-  {"file":"duplicate_class_failure.txt","parser":"gradle","kind":"DuplicateClass","contains":["Duplicate class"],"exit_code":1},
-  {"file":"d8_failure.txt","parser":"gradle","kind":"D8","contains":["D8"],"exit_code":1},
-  {"file":"r8_failure.txt","parser":"gradle","kind":"R8","contains":["R8"],"exit_code":1},
-  {"file":"lint_failure.txt","parser":"gradle","kind":"Lint","contains":["Error"],"exit_code":1},
-  {"file":"unit_test_failure.txt","parser":"gradle","kind":"UnitTest","contains":["FAILED"],"exit_code":1},
-  {"file":"instrumentation_failure.txt","parser":"gradle","kind":"InstrumentationTest","contains":["INSTRUMENTATION"],"exit_code":1},
-  {"file":"adb_devices.txt","parser":"adb-devices","kind":"Adb","contains":["device"],"exit_code":0},
-  {"file":"adb_install_failure.txt","parser":"adb-install","kind":"Adb","contains":["Failure"],"exit_code":1},
-  {"file":"adb_uninstall_success.txt","parser":"adb-uninstall","kind":"Adb","contains":["Success"],"exit_code":0},
-  {"file":"adb_shell_am.txt","parser":"adb-am","kind":"Adb","contains":["Starting"],"exit_code":0},
-  {"file":"adb_shell_pm.txt","parser":"adb-pm","kind":"Adb","contains":["package:"],"exit_code":0},
-  {"file":"java_crash.txt","parser":"logcat-crash","kind":"LogcatCrash","contains":["FATAL EXCEPTION"],"exit_code":0},
-  {"file":"kotlin_coroutine_crash.txt","parser":"logcat-crash","kind":"LogcatCrash","contains":["FATAL EXCEPTION"],"exit_code":0},
-  {"file":"anr.txt","parser":"logcat-anr","kind":"Anr","contains":["ANR in"],"exit_code":0},
-  {"file":"strictmode.txt","parser":"logcat-strictmode","kind":"StrictMode","contains":["StrictMode"],"exit_code":0},
-  {"file":"binder_death.txt","parser":"logcat-binder","kind":"Binder","contains":["DeadObjectException"],"exit_code":0},
-  {"file":"native_crash.txt","parser":"logcat-native","kind":"NativeCrash","contains":["Fatal signal"],"exit_code":0},
-  {"file":"malformed_output.txt","parser":"gradle","kind":null,"contains":["malformed"],"exit_code":1},
-  {"file":"unknown_output.txt","parser":"gradle","kind":null,"contains":["unfamiliar"],"exit_code":1},
-  {"file":"verbose_passthrough.txt","parser":"passthrough","kind":null,"contains":["stacktrace"],"exit_code":1}
+  {
+    "file": "gradle_success.txt",
+    "parser": "gradle",
+    "kind": null,
+    "source_contains": ["BUILD SUCCESSFUL"],
+    "exit_code": 0,
+    "expected": {"confidence": "high", "decision": "rawincompleteevidence"}
+  },
+  {
+    "file": "kotlin_failure.txt",
+    "parser": "gradle",
+    "kind": "KotlinCompiler",
+    "source_contains": ["Unresolved reference", "Caused by:"],
+    "exit_code": 1,
+    "stderr": "synthetic stderr evidence\n",
+    "expected": {
+      "confidence": "high",
+      "decision": "semantic",
+      "root_message": "Unresolved reference: missingApi",
+      "task": ":app:compileDebugKotlin",
+      "module": ":app",
+      "variant": "debug",
+      "location": {"file": "/workspace/app/src/main/java/com/example/app/Main.kt", "line": 42, "column": 17},
+      "causes": ["org.jetbrains.kotlin.gradle.tasks.CompilationErrorException: Compilation error"],
+      "preserved": {"root errors": 1, "caused-by exceptions": 1, "source locations": 1},
+      "collapsed": {"successful Gradle tasks": 20},
+      "rendered_contains": [
+        "[Error] KotlinCompiler: Unresolved reference: missingApi",
+        "Task: :app:compileDebugKotlin",
+        "Module: :app",
+        "Variant: debug",
+        "Location: /workspace/app/src/main/java/com/example/app/Main.kt:42:17",
+        "Caused by: org.jetbrains.kotlin.gradle.tasks.CompilationErrorException: Compilation error",
+        "- 20 successful Gradle tasks",
+        "Raw: contextdroid show"
+      ]
+    }
+  },
+  {
+    "file": "java_failure.txt",
+    "parser": "gradle",
+    "kind": "JavaCompiler",
+    "source_contains": ["cannot find symbol"],
+    "exit_code": 1,
+    "expected": {
+      "confidence": "high", "decision": "rawnotsmaller",
+      "root_message": "cannot find symbol", "task": ":app:compileDebugJavaWithJavac",
+      "module": ":app", "variant": "debug",
+      "location": {"file": "/workspace/app/src/main/java/com/example/app/Main.java", "line": 9, "column": null}
+    }
+  },
+  {
+    "file": "ksp_failure.txt", "parser": "gradle", "kind": "Ksp",
+    "source_contains": ["[ksp]"], "exit_code": 1,
+    "expected": {"confidence": "high", "decision": "rawnotsmaller", "root_message": "No provider found for com.example.app.Repository", "task": ":app:kspDebugKotlin", "module": ":app", "variant": "debug"}
+  },
+  {
+    "file": "kapt_failure.txt", "parser": "gradle", "kind": "Kapt",
+    "source_contains": ["kapt"], "exit_code": 1,
+    "expected": {"confidence": "high", "decision": "rawnotsmaller", "root_message": "annotation processing failed for com.example.app.Widget", "task": ":app:kaptDebugKotlin", "module": ":app", "variant": "debug"}
+  },
+  {
+    "file": "compose_failure.txt", "parser": "gradle", "kind": "ComposeCompiler",
+    "source_contains": ["Composable"], "exit_code": 1,
+    "expected": {"confidence": "high", "decision": "rawnotsmaller", "root_message": "Compose Compiler: @Composable invocations can only happen from a @Composable context", "task": ":app:compileDebugKotlin", "module": ":app", "variant": "debug"}
+  },
+  {
+    "file": "aapt2_failure.txt", "parser": "gradle", "kind": "Aapt2",
+    "source_contains": ["resource"], "exit_code": 1,
+    "expected": {"confidence": "high", "decision": "rawnotsmaller", "root_message": "AAPT: error: resource color/missing_color not found.", "task": ":app:processDebugResources", "module": ":app", "variant": "debug"}
+  },
+  {
+    "file": "resource_merge_failure.txt", "parser": "gradle", "kind": "ResourceMerge",
+    "source_contains": ["resources"], "exit_code": 1,
+    "expected": {"confidence": "high", "decision": "rawnotsmaller", "root_message": "Duplicate resources: drawable/example_icon", "task": ":app:mergeDebugResources", "module": ":app", "variant": "debug"}
+  },
+  {
+    "file": "manifest_failure.txt", "parser": "gradle", "kind": "ManifestMerger",
+    "source_contains": ["Manifest merger failed"], "exit_code": 1,
+    "expected": {"confidence": "high", "decision": "rawnotsmaller", "root_message": "Manifest merger failed with multiple errors, see logs", "task": ":app:processDebugMainManifest", "module": ":app", "variant": "debug"}
+  },
+  {
+    "file": "dependency_failure.txt", "parser": "gradle", "kind": "DependencyResolution",
+    "source_contains": ["Could not resolve", "com.example:missing-library:1.0.0"], "exit_code": 1,
+    "expected": {"confidence": "high", "decision": "rawnotsmaller", "root_message": "Could not resolve com.example:missing-library:1.0.0", "task": ":app:mergeDebugNativeLibs", "module": ":app", "variant": "debug", "dependency_coordinates": ["com.example:missing-library:1.0.0"]}
+  },
+  {
+    "file": "duplicate_class_failure.txt", "parser": "gradle", "kind": "DuplicateClass",
+    "source_contains": ["Duplicate class"], "exit_code": 1,
+    "expected": {"confidence": "high", "decision": "rawnotsmaller", "root_message": "Duplicate class com.example.shared.Model found in modules example-a and example-b", "task": ":app:checkDebugDuplicateClasses", "module": ":app", "variant": "debug"}
+  },
+  {
+    "file": "d8_failure.txt", "parser": "gradle", "kind": "D8",
+    "source_contains": ["D8"], "exit_code": 1,
+    "expected": {"confidence": "high", "decision": "rawnotsmaller", "root_message": "D8: Cannot fit requested classes in a single dex file", "task": ":app:mergeExtDexDebug", "module": ":app", "variant": "debug"}
+  },
+  {
+    "file": "r8_failure.txt", "parser": "gradle", "kind": "R8",
+    "source_contains": ["R8"], "exit_code": 1,
+    "expected": {"confidence": "high", "decision": "rawnotsmaller", "root_message": "R8: Missing class com.example.optional.MissingApi", "task": ":app:minifyReleaseWithR8", "module": ":app", "variant": "release"}
+  },
+  {
+    "file": "lint_failure.txt", "parser": "gradle", "kind": "Lint",
+    "source_contains": ["Error", "ExportedReceiver"], "exit_code": 1,
+    "expected": {"confidence": "high", "decision": "rawnotsmaller", "root_message": "exported must be specified", "task": ":app:lintDebug", "module": ":app", "variant": "debug", "location": {"file": "/workspace/app/src/main/AndroidManifest.xml", "line": 7, "column": null}}
+  },
+  {
+    "file": "unit_test_failure.txt", "parser": "gradle", "kind": "UnitTest",
+    "source_contains": ["FAILED", "expected:<ready> but was:<loading>"], "exit_code": 1,
+    "expected": {"confidence": "high", "decision": "rawnotsmaller", "root_message": "com.example.app.WidgetTest > rendersExpectedState FAILED", "task": ":app:testDebugUnitTest", "module": ":app", "variant": "debug", "test_assertion": {"expected": "ready", "actual": "loading"}}
+  },
+  {
+    "file": "instrumentation_failure.txt", "parser": "gradle", "kind": "InstrumentationTest",
+    "source_contains": ["INSTRUMENTATION_FAILED"], "exit_code": 1,
+    "expected": {"confidence": "high", "decision": "rawnotsmaller", "root_message": "INSTRUMENTATION_FAILED: Process crashed", "task": ":app:connectedDebugAndroidTest", "module": ":app", "variant": "debug"}
+  },
+  {
+    "file": "adb_devices.txt", "parser": "adb-devices", "kind": "Adb",
+    "source_contains": ["device"], "exit_code": 0,
+    "expected": {"confidence": "high", "decision": "rawnotsmaller", "root_message": "emulator-5554 device product:sdk_gphone64_x86_64 model:sdk_gphone64 device:emu64xa", "details": {"serial": "emulator-5554", "state": "device"}}
+  },
+  {
+    "file": "adb_install_failure.txt", "parser": "adb-install", "kind": "Adb",
+    "source_contains": ["Failure"], "exit_code": 1,
+    "expected": {"confidence": "high", "decision": "rawnotsmaller", "root_message": "adb: failed to install example.apk: Failure [INSTALL_FAILED_VERSION_DOWNGRADE: Downgrade detected]"}
+  },
+  {
+    "file": "adb_uninstall_success.txt", "parser": "adb-uninstall", "kind": "Adb",
+    "source_contains": ["Success"], "exit_code": 0,
+    "expected": {"confidence": "high", "decision": "rawnotsmaller", "root_message": "Success"}
+  },
+  {
+    "file": "adb_shell_am.txt", "parser": "adb-am", "kind": "Adb",
+    "source_contains": ["Starting"], "exit_code": 0,
+    "expected": {"confidence": "high", "decision": "rawnotsmaller", "root_message": "Starting: Intent { cmp=com.example.app/.MainActivity }"}
+  },
+  {
+    "file": "adb_shell_pm.txt", "parser": "adb-pm", "kind": "Adb",
+    "source_contains": ["package:"], "exit_code": 0,
+    "expected": {"confidence": "high", "decision": "rawnotsmaller", "root_message": "package:com.example.app"}
+  },
+  {
+    "file": "java_crash.txt", "parser": "logcat-crash", "kind": "LogcatCrash",
+    "source_contains": ["FATAL EXCEPTION", "MainActivity.onCreate"], "exit_code": 0,
+    "expected": {
+      "confidence": "high", "decision": "rawnotsmaller",
+      "root_message": "java.lang.IllegalStateException: synthetic boom",
+      "error_type": "java.lang.IllegalStateException",
+      "application_frame": "at com.example.app.MainActivity.onCreate(MainActivity.kt:42)",
+      "details": {"timestamp": "07-15 10:11:12.123", "pid": "4242", "tid": "4242", "process": "com.example.app", "package": "com.example.app", "thread": "main", "priority": "E", "tag": "AndroidRuntime"},
+      "preserved": {"Logcat incidents": 1}
+    }
+  },
+  {
+    "file": "kotlin_coroutine_crash.txt", "parser": "logcat-crash", "kind": "LogcatCrash",
+    "source_contains": ["FATAL EXCEPTION", "Caused by:"], "exit_code": 0,
+    "expected": {
+      "confidence": "high", "decision": "rawnotsmaller",
+      "root_message": "kotlinx.coroutines.JobCancellationException: synthetic cancellation",
+      "error_type": "kotlinx.coroutines.JobCancellationException",
+      "causes": ["java.lang.IllegalArgumentException: synthetic cause"],
+      "details": {"timestamp": "07-15 10:11:12.123", "pid": "4242", "tid": "4243", "process": "com.example.app", "package": "com.example.app", "thread": "DefaultDispatcher-worker-1"}
+    }
+  },
+  {
+    "file": "anr.txt", "parser": "logcat-anr", "kind": "Anr",
+    "source_contains": ["ANR in", "Reason:"], "exit_code": 0,
+    "expected": {"confidence": "high", "decision": "rawnotsmaller", "root_message": "ANR in com.example.app", "details": {"timestamp": "07-15 10:11:12.123", "pid": "1000", "tid": "1001", "process": "com.example.app", "package": "com.example.app", "anr_reason": "Input dispatching timed out"}}
+  },
+  {
+    "file": "strictmode.txt", "parser": "logcat-strictmode", "kind": "StrictMode",
+    "source_contains": ["StrictMode"], "exit_code": 0,
+    "expected": {"confidence": "medium", "decision": "rawnotsmaller", "root_message": "StrictMode policy violation: android.os.strictmode.DiskReadViolation", "details": {"timestamp": "07-15 10:11:12.123", "pid": "4242", "tid": "4242", "priority": "E", "tag": "StrictMode"}}
+  },
+  {
+    "file": "binder_death.txt", "parser": "logcat-binder", "kind": "Binder",
+    "source_contains": ["DeadObjectException"], "exit_code": 0,
+    "expected": {"confidence": "medium", "decision": "rawnotsmaller", "root_message": "android.os.DeadObjectException: binder died", "error_type": "android.os.DeadObjectException", "details": {"timestamp": "07-15 10:11:12.123", "pid": "4242", "tid": "4243", "priority": "E", "tag": "ExampleService"}}
+  },
+  {
+    "file": "native_crash.txt", "parser": "logcat-native", "kind": "NativeCrash",
+    "source_contains": ["Fatal signal", "Tombstone"], "exit_code": 0,
+    "expected": {"confidence": "high", "decision": "rawnotsmaller", "root_message": "Fatal signal 11 (SIGSEGV), code 1, fault addr 0x0 in tid 4243", "details": {"timestamp": "07-15 10:11:12.123", "pid": "4242", "tid": "4243", "priority": "F", "tag": "libc"}}
+  },
+  {
+    "file": "malformed_output.txt", "parser": "gradle", "kind": null,
+    "source_contains": ["malformed"], "exit_code": 1,
+    "expected": {"confidence": "low", "decision": "rawlowconfidence"}
+  },
+  {
+    "file": "unknown_output.txt", "parser": "gradle", "kind": null,
+    "source_contains": ["unfamiliar"], "exit_code": 1,
+    "expected": {"confidence": "low", "decision": "rawlowconfidence"}
+  },
+  {
+    "file": "verbose_passthrough.txt", "parser": "passthrough", "kind": null,
+    "source_contains": ["stacktrace"], "exit_code": 1, "output_mode": "lossless",
+    "expected": {"confidence": "low", "decision": "rawlossless"}
+  }
 ]

@@ -14,7 +14,7 @@ categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-anyhow = "1.0"
+anyhow = "1.0.103"
 ignore = "0.4"
 walkdir = "2"
 regex = "1"
@@ -30,7 +30,7 @@ tempfile = "3"
 sha2 = "0.10"
 getrandom = "0.4"
 flate2 = "1.0"
-quick-xml = "0.37"
+quick-xml = "0.41"
 which = "8"
 automod = "1"
 

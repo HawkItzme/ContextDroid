@@ -69,7 +69,7 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
         command,
         "adb",
         &display,
-        move |raw, exit_code, run_id| parse(&original, raw, exit_code, run_id, kind),
+        move |raw, exit_code, run_id| Ok(parse(&original, raw, exit_code, run_id, kind)),
         RunOptions::default(),
     )
 }
@@ -175,6 +175,8 @@ fn event(
         location: None,
         causes: Vec::new(),
         frames: Vec::new(),
+        dependency_coordinates: Vec::new(),
+        test_assertion: None,
         details,
         raw_line: Some(raw_line),
     }
