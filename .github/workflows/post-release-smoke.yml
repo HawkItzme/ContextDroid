@@ -31,14 +31,14 @@ jobs:
       - name: Install from the public release
         env:
           CONTEXTDROID_VERSION: ${{ inputs.tag }}
-          INSTALL_DIR: ${{ runner.temp }}/contextdroid-bin
+          CONTEXTDROID_INSTALL_DIR: ${{ runner.temp }}/contextdroid-bin
         run: |
           set -euo pipefail
           curl --fail --silent --show-error --location \
             https://raw.githubusercontent.com/HawkItzme/ContextDroid/main/install.sh \
             --output "$RUNNER_TEMP/install.sh"
           sh "$RUNNER_TEMP/install.sh"
-          "$INSTALL_DIR/contextdroid" --version | grep -F "contextdroid ${CONTEXTDROID_VERSION#v}"
+          "$CONTEXTDROID_INSTALL_DIR/contextdroid" --version | grep -F "contextdroid ${CONTEXTDROID_VERSION#v}"
 
   install-windows:
     name: Install Windows x86_64

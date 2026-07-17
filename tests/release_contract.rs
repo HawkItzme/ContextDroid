@@ -150,3 +150,25 @@ fn archive_validation_does_not_trigger_pipefail_sigpipe() {
     assert!(workflow.contains("archive-entries.txt"));
     assert!(workflow.contains("windows-archive-entries.txt"));
 }
+
+#[test]
+fn package_assets_use_github_safe_names() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workflow = fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+
+    assert!(workflow.contains("contextdroid_${VERSION}-1_amd64.deb"));
+    assert!(workflow.contains("contextdroid-${VERSION}-1.x86_64.rpm"));
+    assert!(workflow.contains("GitHub-safe package filenames"));
+    assert!(workflow.contains("-name '*~*'"));
+}
+
+#[test]
+fn public_unix_smoke_uses_the_installers_directory_variable() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workflow =
+        fs::read_to_string(root.join(".github/workflows/post-release-smoke.yml")).unwrap();
+
+    assert!(workflow.contains("CONTEXTDROID_INSTALL_DIR: ${{ runner.temp }}/contextdroid-bin"));
+    assert!(workflow.contains("\"$CONTEXTDROID_INSTALL_DIR/contextdroid\" --version"));
+    assert!(!workflow.contains("\n          INSTALL_DIR:"));
+}
