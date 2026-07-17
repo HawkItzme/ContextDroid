@@ -1,6 +1,5 @@
 //! Reads Claude Code session logs from disk and streams their command history.
 
-use crate::hooks::init::resolve_claude_dir;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::fs;
@@ -44,7 +43,8 @@ pub struct ClaudeProvider;
 impl ClaudeProvider {
     /// Get the base directory for Claude Code projects.
     fn projects_dir() -> Result<PathBuf> {
-        let claude_dir = resolve_claude_dir().context("could not determine claude directory")?;
+        let claude_dir =
+            crate::hooks::resolve_claude_dir().context("could not determine claude directory")?;
         Ok(claude_dir.join("projects"))
     }
 

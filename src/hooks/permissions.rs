@@ -28,6 +28,7 @@ pub fn check_command(cmd: &str) -> PermissionVerdict {
 
 /// The agent host whose own permission settings should be consulted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum Host {
     Claude,
     Cursor,

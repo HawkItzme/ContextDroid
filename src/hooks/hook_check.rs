@@ -3,7 +3,7 @@
 use super::constants::{
     CLAUDE_HOOK_COMMAND, HOOKS_SUBDIR, PRE_TOOL_USE_KEY, REWRITE_HOOK_FILE, SETTINGS_JSON,
 };
-use super::init::resolve_claude_dir;
+use super::resolve_claude_dir;
 use crate::core::constants::RTK_DATA_DIR;
 use std::path::PathBuf;
 
