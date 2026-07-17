@@ -44,10 +44,11 @@ performance claim.
 
 ## Remaining evidence
 
-The public `architecture-samples` CI job records real Gradle/AGP/Kotlin bytes, estimated tokens,
-latency, exit parity, and preservation. The permissioned internal pilot records recoveries and
-reruns. Neither is green on the exact release commit yet, so no representative aggregate
-compression claim is published. ContextDroid does not reuse upstream RTK percentages and does not
-claim to outperform RTK or raw tools for every general command.
+The public `architecture-samples` CI job passed for the release candidate and records real
+Gradle/AGP/Kotlin bytes, estimated tokens, latency, exit parity, and preservation. The permissioned
+internal pilot also passed and records recoveries and reruns. These results provide release
+correctness evidence, but the current corpus is not broad enough for a representative aggregate
+compression claim. ContextDroid does not reuse upstream RTK percentages and does not claim to
+outperform RTK or raw tools for every general command.
 
 Correctness gates block release; compression percentage does not.
