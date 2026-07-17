@@ -3,14 +3,6 @@ name: Package dry run
 on:
   pull_request:
     branches: [product/contextdroid-v0.1, develop, main]
-    paths:
-      - Cargo.toml
-      - Cargo.lock
-      - install.sh
-      - install.ps1
-      - release/**
-      - .github/workflows/release.yml
-      - .github/workflows/package-dry-run.yml
   workflow_dispatch:
 
 permissions:

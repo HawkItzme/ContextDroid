@@ -112,3 +112,16 @@ fn quick_install_contract_is_cross_platform_and_prerelease_safe() {
     assert!(workflow.contains("release-manifest.json"));
     assert!(workflow.contains("install.ps1"));
 }
+
+#[test]
+fn package_dry_run_gates_every_pull_request_commit() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workflow =
+        fs::read_to_string(root.join(".github/workflows/package-dry-run.yml")).unwrap();
+
+    assert!(workflow.contains("pull_request:"));
+    assert!(
+        !workflow.contains("paths:"),
+        "release packaging must not skip commits based on changed paths"
+    );
+}

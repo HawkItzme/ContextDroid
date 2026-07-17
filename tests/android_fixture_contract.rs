@@ -146,3 +146,17 @@ fn fixture<'a>(contracts: &'a [Contract], file: &str) -> &'a Contract {
         .find(|contract| contract.file == file)
         .unwrap()
 }
+
+#[test]
+fn synthetic_smoke_prepares_the_resource_fixture_directory() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let smoke = fs::read_to_string(root.join("scripts/smoke-android-linux.sh")).unwrap();
+    let mkdir = smoke
+        .find("mkdir -p app/src/main/res/layout")
+        .expect("smoke must prepare the optional Android layout directory");
+    let copy = smoke
+        .find("cp scenarios/broken.xml app/src/main/res/layout/broken.xml")
+        .expect("smoke must inject the synthetic AAPT fixture");
+
+    assert!(mkdir < copy, "resource directory must exist before fixture copy");
+}

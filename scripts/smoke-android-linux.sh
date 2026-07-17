@@ -28,6 +28,7 @@ test "$status" -ne 0
 grep -q "Unresolved reference" kotlin.out
 rm app/src/main/java/com/example/contextdroid/KotlinFailure.kt
 
+mkdir -p app/src/main/res/layout
 cp scenarios/broken.xml app/src/main/res/layout/broken.xml
 set +e
 "$bin" gradlew --no-daemon processDebugResources > aapt.out 2>&1
