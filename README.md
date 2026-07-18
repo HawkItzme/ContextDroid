@@ -1,5 +1,7 @@
 # ContextDroid
 
+![ContextDroid — Android-aware command-output optimization](docs/assets/contextdroid-banner.png)
+
 ContextDroid is an independently maintained, Android-focused command-output optimizer
 derived from RTK. It extracts useful Android diagnostics for AI coding agents while securely
 staging complete stdout and stderr before parsing. Failed optimized runs are retained for exact
