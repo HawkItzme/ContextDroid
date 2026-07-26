@@ -5,10 +5,10 @@ root=$(mktemp -d)
 trap 'rm -rf "$root"' EXIT
 bin="$PWD/target/release/contextdroid"
 
-"$bin" integrations claude preview --root "$root/.claude" | grep -q "contextdroid hook claude"
-"$bin" integrations claude install --root "$root/.claude"
-"$bin" integrations claude status --root "$root/.claude" | grep -q "installed"
-"$bin" integrations claude uninstall --root "$root/.claude"
+HOME="$root" "$bin" setup preview --only claude | grep -q "contextdroid hook claude"
+HOME="$root" "$bin" setup apply --only claude --yes
+HOME="$root" "$bin" setup status --only claude | grep -q "installed"
+HOME="$root" "$bin" setup uninstall --only claude --yes
 test ! -e "$root/.claude/settings.json" || ! grep -q "contextdroid hook claude" "$root/.claude/settings.json"
 
 mkdir "$root/repo"

@@ -2,7 +2,7 @@
 
 Binary installation and agent integration installation are separate operations.
 
-## Install the published alpha
+## Install the latest stable release
 
 Linux and macOS:
 
@@ -41,26 +41,22 @@ contextdroid --help
 Preview is non-mutating. Install writes only the bounded ContextDroid entry:
 
 ```text
-contextdroid integrations claude preview
-contextdroid integrations claude install
-
-contextdroid integrations cursor preview --cursor-schema-version 1
-contextdroid integrations cursor install --cursor-schema-version 1
-
-contextdroid integrations codex preview --root .
-contextdroid integrations codex install --root .
+contextdroid setup detect
+contextdroid setup preview
+contextdroid setup apply --yes
+contextdroid setup status
 ```
 
-Use `status` to inspect an integration and `uninstall` to remove it. Claude and Cursor may
-target user configuration when no root override is provided. Codex modifies only its bounded
-managed block in the selected project `AGENTS.md`.
+Use `contextdroid setup uninstall --yes` to remove only managed entries. Claude may target user
+configuration. Codex modifies only its bounded managed block in the selected project `AGENTS.md`.
+Cursor is experimental and requires explicit opt-in.
 
 ## Other packages
 
-Direct archives, DEB, and RPM packages are attached to the GitHub prerelease. Homebrew requires a
+Direct archives, DEB, and RPM packages are attached to the GitHub release. Homebrew requires a
 selected downstream tap and separate install/uninstall validation, so it is deferred.
 
-Homebrew is excluded from the first alpha without blocking direct GitHub installation.
+Homebrew is excluded from v0.1.0 without blocking direct GitHub installation.
 
 See the repository [README](../../../README.md), [integrations guide](../../INTEGRATIONS.md),
 and [release checklist](../../RELEASE_CHECKLIST.md).

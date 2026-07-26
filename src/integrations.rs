@@ -35,6 +35,245 @@ pub struct IntegrationResult {
     pub rtk_conflicts: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetupAction {
+    Detect,
+    Preview,
+    Apply,
+    Status,
+    Uninstall,
+}
+
+#[derive(Debug, Clone)]
+pub struct SetupOptions {
+    pub action: SetupAction,
+    pub only: Vec<Agent>,
+    pub include_experimental: bool,
+    pub project_root: PathBuf,
+    pub confirmed: bool,
+    /// Test-only root for home-scoped integration directories.
+    pub root_override: Option<PathBuf>,
+    #[cfg(test)]
+    pub fail_after_writes: Option<usize>,
+}
+
+impl Default for SetupOptions {
+    fn default() -> Self {
+        Self {
+            action: SetupAction::Detect,
+            only: Vec::new(),
+            include_experimental: false,
+            project_root: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            confirmed: false,
+            root_override: None,
+            #[cfg(test)]
+            fail_after_writes: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetupAdapter {
+    pub agent: Agent,
+    pub tier: &'static str,
+    pub detected: bool,
+    pub selected: bool,
+    pub installed: bool,
+    pub changed: bool,
+    pub path: PathBuf,
+    pub preview: String,
+    pub rtk_conflicts: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetupReport {
+    pub action: SetupAction,
+    pub adapters: Vec<SetupAdapter>,
+    pub changed: usize,
+}
+
+fn setup_root(agent: Agent, options: &SetupOptions) -> Result<PathBuf> {
+    if let Some(base) = &options.root_override {
+        return Ok(match agent {
+            Agent::Claude => base.join(".claude"),
+            Agent::Cursor => base.join(".cursor"),
+            Agent::Codex => options.project_root.clone(),
+        });
+    }
+    if agent == Agent::Codex {
+        return Ok(options.project_root.clone());
+    }
+    default_root(agent)
+}
+
+fn setup_agents(options: &SetupOptions) -> Result<Vec<Agent>> {
+    let agents = if options.only.is_empty() {
+        let mut defaults = vec![Agent::Claude, Agent::Codex];
+        if options.include_experimental {
+            defaults.push(Agent::Cursor);
+        }
+        defaults
+    } else {
+        options.only.clone()
+    };
+    if agents.contains(&Agent::Cursor) && !options.include_experimental {
+        anyhow::bail!("Cursor setup is experimental; pass --include-experimental to select it");
+    }
+    let mut unique = Vec::new();
+    for agent in agents {
+        if !unique.contains(&agent) {
+            unique.push(agent);
+        }
+    }
+    Ok(unique)
+}
+
+fn integration_path(agent: Agent, root: &Path) -> PathBuf {
+    match agent {
+        Agent::Claude => root.join("settings.json"),
+        Agent::Cursor => root.join("hooks.json"),
+        Agent::Codex => root.join("AGENTS.md"),
+    }
+}
+
+fn restore_setup_files(snapshots: &[(PathBuf, Option<Vec<u8>>)]) -> Result<()> {
+    for (path, original) in snapshots.iter().rev() {
+        match original {
+            Some(bytes) => crate::product::write_atomic(path, bytes)?,
+            None if path.exists() => {
+                // Rollback removes only a selected integration file proven absent in the
+                // preflight snapshot and created by this transaction.
+                // nosemgrep: filesystem-deletion
+                fs::remove_file(path)
+                    .with_context(|| format!("failed to roll back {}", path.display()))?
+            }
+            None => {}
+        }
+    }
+    Ok(())
+}
+
+pub fn setup(options: SetupOptions) -> Result<SetupReport> {
+    if matches!(options.action, SetupAction::Apply | SetupAction::Uninstall) && !options.confirmed {
+        anyhow::bail!("setup changes require confirmation; review preview and pass --yes");
+    }
+    let agents = setup_agents(&options)?;
+    let lifecycle_action = match options.action {
+        SetupAction::Detect | SetupAction::Status => Action::Status,
+        SetupAction::Preview | SetupAction::Apply => Action::Preview,
+        SetupAction::Uninstall => Action::Status,
+    };
+
+    // Preflight every selected adapter before the first write.
+    let mut adapters = Vec::new();
+    for agent in agents {
+        let root = setup_root(agent, &options)?;
+        let path = integration_path(agent, &root);
+        if path.exists() && !path.is_file() {
+            anyhow::bail!("integration path is not a regular file: {}", path.display());
+        }
+        let detected = root.exists() || path.exists() || agent == Agent::Codex;
+        let result = run(agent, lifecycle_action, Some(root), None)?;
+        if options.action == SetupAction::Apply && result.rtk_conflicts > 0 {
+            anyhow::bail!(
+                "recognized RTK integration conflict in {}; migrate it explicitly before setup",
+                result.path.display()
+            );
+        }
+        adapters.push(SetupAdapter {
+            agent,
+            tier: if agent == Agent::Cursor {
+                "experimental"
+            } else if agent == Agent::Codex {
+                "supported-guidance"
+            } else {
+                "supported"
+            },
+            detected,
+            selected: true,
+            installed: result.installed,
+            changed: false,
+            path: result.path,
+            preview: result.preview,
+            rtk_conflicts: result.rtk_conflicts,
+        });
+    }
+
+    if matches!(
+        options.action,
+        SetupAction::Detect | SetupAction::Preview | SetupAction::Status
+    ) {
+        return Ok(SetupReport {
+            action: options.action,
+            adapters,
+            changed: 0,
+        });
+    }
+
+    let snapshots: Vec<(PathBuf, Option<Vec<u8>>)> = adapters
+        .iter()
+        .map(|adapter| {
+            let original = fs::read(&adapter.path).ok();
+            (adapter.path.clone(), original)
+        })
+        .collect();
+    for (path, original) in &snapshots {
+        if let Some(bytes) = original {
+            let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%.fZ");
+            let backup = path.with_extension(format!("contextdroid-backup-{timestamp}"));
+            fs::write(&backup, bytes)
+                .with_context(|| format!("failed to create backup {}", backup.display()))?;
+        }
+    }
+
+    let action = if options.action == SetupAction::Apply {
+        Action::Install
+    } else {
+        Action::Uninstall
+    };
+    let mut changed = 0;
+    #[cfg(test)]
+    let mut writes_completed = 0;
+    for adapter in &mut adapters {
+        let root = adapter
+            .path
+            .parent()
+            .context("integration path has no parent")?
+            .to_path_buf();
+        match run(adapter.agent, action, Some(root), None) {
+            Ok(result) => {
+                adapter.installed = result.installed;
+                adapter.changed = result.changed;
+                adapter.preview = result.preview;
+                if result.changed {
+                    changed += 1;
+                }
+                #[cfg(test)]
+                {
+                    writes_completed += 1;
+                    if options.fail_after_writes == Some(writes_completed) {
+                        restore_setup_files(&snapshots)?;
+                        anyhow::bail!(
+                            "simulated setup write failure after {writes_completed} adapter"
+                        );
+                    }
+                }
+            }
+            Err(error) => {
+                restore_setup_files(&snapshots)
+                    .with_context(|| format!("setup failed ({error}); rollback also failed"))?;
+                return Err(error.context("setup failed; all selected adapters were rolled back"));
+            }
+        }
+    }
+
+    Ok(SetupReport {
+        action: options.action,
+        adapters,
+        changed,
+    })
+}
+
 pub fn run(
     agent: Agent,
     action: Action,
@@ -553,5 +792,133 @@ mod tests {
 
         let second = migrate_claude_rtk_hooks(temp.path(), true).unwrap();
         assert!(!second.changed);
+    }
+
+    #[test]
+    fn setup_detect_is_read_only_and_excludes_experimental_cursor_by_default() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir(temp.path().join(".claude")).unwrap();
+        fs::create_dir(temp.path().join(".cursor")).unwrap();
+
+        let report = setup(SetupOptions {
+            action: SetupAction::Detect,
+            project_root: temp.path().to_path_buf(),
+            root_override: Some(temp.path().to_path_buf()),
+            ..SetupOptions::default()
+        })
+        .unwrap();
+
+        assert!(report
+            .adapters
+            .iter()
+            .any(|item| item.agent == Agent::Claude));
+        assert!(report
+            .adapters
+            .iter()
+            .any(|item| item.agent == Agent::Codex));
+        assert!(!report
+            .adapters
+            .iter()
+            .any(|item| item.agent == Agent::Cursor));
+        assert!(!temp.path().join(".claude/settings.json").exists());
+        assert!(!temp.path().join("AGENTS.md").exists());
+    }
+
+    #[test]
+    fn setup_apply_is_idempotent_and_uninstall_removes_only_managed_entries() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir(temp.path().join(".claude")).unwrap();
+        fs::write(
+            temp.path().join(".claude/settings.json"),
+            r#"{"theme":"dark","hooks":{"PreToolUse":[{"command":"other"}]}}"#,
+        )
+        .unwrap();
+        fs::write(temp.path().join("AGENTS.md"), "# Team rules\n").unwrap();
+        let options = SetupOptions {
+            action: SetupAction::Apply,
+            only: vec![Agent::Claude, Agent::Codex],
+            project_root: temp.path().to_path_buf(),
+            root_override: Some(temp.path().to_path_buf()),
+            confirmed: true,
+            ..SetupOptions::default()
+        };
+
+        let first = setup(options.clone()).unwrap();
+        assert_eq!(first.changed, 2);
+        let second = setup(options).unwrap();
+        assert_eq!(second.changed, 0);
+
+        setup(SetupOptions {
+            action: SetupAction::Uninstall,
+            only: vec![Agent::Claude, Agent::Codex],
+            project_root: temp.path().to_path_buf(),
+            root_override: Some(temp.path().to_path_buf()),
+            confirmed: true,
+            ..SetupOptions::default()
+        })
+        .unwrap();
+        let settings = fs::read_to_string(temp.path().join(".claude/settings.json")).unwrap();
+        assert!(settings.contains(r#""theme": "dark""#));
+        assert!(settings.contains(r#""command": "other""#));
+        assert!(!settings.contains(CLAUDE_COMMAND));
+        assert_eq!(
+            fs::read_to_string(temp.path().join("AGENTS.md")).unwrap(),
+            "# Team rules\n"
+        );
+    }
+
+    #[test]
+    fn setup_preflight_conflict_prevents_partial_application() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir(temp.path().join(".claude")).unwrap();
+        fs::write(
+            temp.path().join(".claude/settings.json"),
+            r#"{"hooks":{"PreToolUse":[{"command":"rtk hook claude"}]}}"#,
+        )
+        .unwrap();
+        fs::write(temp.path().join("AGENTS.md"), "# Existing\n").unwrap();
+
+        let result = setup(SetupOptions {
+            action: SetupAction::Apply,
+            only: vec![Agent::Codex, Agent::Claude],
+            project_root: temp.path().to_path_buf(),
+            root_override: Some(temp.path().to_path_buf()),
+            confirmed: true,
+            ..SetupOptions::default()
+        });
+
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read_to_string(temp.path().join("AGENTS.md")).unwrap(),
+            "# Existing\n"
+        );
+    }
+
+    #[test]
+    fn setup_rolls_back_an_earlier_adapter_when_a_later_write_fails() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir(temp.path().join(".claude")).unwrap();
+        let settings = temp.path().join(".claude/settings.json");
+        fs::write(&settings, r#"{"theme":"dark"}"#).unwrap();
+        fs::write(temp.path().join("AGENTS.md"), "# Team rules\n").unwrap();
+
+        let result = setup(SetupOptions {
+            action: SetupAction::Apply,
+            only: vec![Agent::Claude, Agent::Codex],
+            project_root: temp.path().to_path_buf(),
+            root_override: Some(temp.path().to_path_buf()),
+            confirmed: true,
+            fail_after_writes: Some(1),
+            ..SetupOptions::default()
+        });
+
+        assert!(result.is_err());
+        let restored = fs::read_to_string(settings).unwrap();
+        assert_eq!(restored, r#"{"theme":"dark"}"#);
+        assert!(!restored.contains(CLAUDE_COMMAND));
+        assert_eq!(
+            fs::read_to_string(temp.path().join("AGENTS.md")).unwrap(),
+            "# Team rules\n"
+        );
     }
 }

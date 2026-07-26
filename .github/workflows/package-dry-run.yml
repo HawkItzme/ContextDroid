@@ -12,9 +12,9 @@ jobs:
   package:
     uses: ./.github/workflows/release.yml
     with:
-      tag: v0.1.0-alpha.1
+      tag: v0.1.0
       publish: false
-      prerelease: true
+      prerelease: false
     permissions:
       # Reusable workflows cannot elevate permissions above their caller. The
       # publish job is conditionally skipped here, but its declared permissions

@@ -4,7 +4,7 @@
 class Contextdroid < Formula
   desc "Conservative Android diagnostics with durable raw-output recovery"
   homepage "https://github.com/HawkItzme/ContextDroid"
-  version "0.1.0-alpha.1"
+  version "0.1.0"
   license "Apache-2.0"
 
   on_macos do

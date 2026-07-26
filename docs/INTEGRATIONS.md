@@ -1,37 +1,39 @@
 # Agent Integrations
 
-`contextdroid integrations <agent> preview|install|status|uninstall` manages only bounded
-ContextDroid entries and preserves unrelated settings.
+`contextdroid setup` detects and manages bounded ContextDroid entries while preserving unrelated
+settings.
 
-Claude Code on Linux is the supported alpha candidate. It uses `PreToolUse` updated input with
-`contextdroid hook claude`. Cursor hooks schema version 1 is experimental until cross-platform
-release-commit smoke is recorded; unknown schema versions fail closed.
+Claude Code on Linux is supported. It uses `PreToolUse` updated input with
+`contextdroid hook claude`. Cursor hooks schema version 1 is experimental and excluded unless
+`--include-experimental` is supplied; unknown schema versions fail closed.
 
 Codex is guidance-only and has no claimed transparent command interception. It adds a delimited
 managed block to a project `AGENTS.md` explaining explicit Android commands, raw exclusions,
 and recovery. Uninstall removes only that block.
 
-Preview and status do not write. Lifecycle tests use temporary roots. Actual global installation
-changes user configuration and must be initiated explicitly by the user.
+Detect, preview, and status do not write. Apply preflights all selected adapters, creates backups,
+and rolls the selected set back if any write fails. Actual installation changes user or project
+configuration and requires an interactive confirmation or `--yes`.
 
 If a recognized RTK hook is present, install fails closed and status reports the conflict.
 Preview does not propose a coexisting hook. Use `contextdroid migrate rtk --apply` for the only
 supported backed-up replacement flow; see [MIGRATION.md](MIGRATION.md).
 
-Preview the exact managed change:
+Detect and preview the exact managed change:
 
 ```text
-contextdroid integrations claude preview
-contextdroid integrations cursor preview --cursor-schema-version 1
-contextdroid integrations codex preview --root .
+contextdroid setup detect
+contextdroid setup preview
 ```
 
-Install after review:
+Apply after review, then inspect or uninstall:
 
 ```text
-contextdroid integrations claude install
-contextdroid integrations cursor install --cursor-schema-version 1
-contextdroid integrations codex install --root .
+contextdroid setup apply --yes
+contextdroid setup status
+contextdroid setup uninstall --yes
 ```
 
-Replace `install` with `status` or `uninstall` to inspect or remove the managed entry.
+Use repeatable `--only` flags to select agents. Cursor additionally requires
+`--include-experimental`. The agent-specific `contextdroid integrations` lifecycle is retained
+throughout 0.1.x and uses the same underlying engine; removal will not occur before 0.2.0.

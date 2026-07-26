@@ -15,4 +15,4 @@ checks archive contents, generates `SHA256SUMS`, and tests the Linux installer l
 For publication, a maintainer must explicitly dispatch the release workflow from `main` with an
 existing tag that points to the checked-out commit. Publishing remains prohibited until explicit
 approval. The inherited release-please and next-release workflows are disabled for the first
-alpha.
+release.

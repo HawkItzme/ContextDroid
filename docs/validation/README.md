@@ -14,7 +14,7 @@ runs the original Gradle command and ContextDroid separately, and verifies the s
 code and exact root identifier. It records raw/returned bytes, estimated tokens, lines, latency,
 and recovery artifacts. The injected file is removed after the run.
 
-Required alpha matrix:
+Required release matrix:
 
 | Workload | Evidence source | Required result |
 | --- | --- | --- |
@@ -31,4 +31,5 @@ The local Windows public-sample attempt on 2026-07-17 was inconclusive: its depe
 produced no output before it was stopped, the installed `sdkmanager` is legacy and fails under JDK
 23, and no JDK 17 is installed. This is not recorded as a local pass. Clean JDK 17 CI and the
 permissioned internal pilot subsequently passed on the release candidate. Only redacted aggregate
-pilot evidence was retained; the public alpha is no longer blocked on this validation matrix.
+pilot evidence was retained outside the public tree; the stable release is not blocked on this
+completed validation matrix.
