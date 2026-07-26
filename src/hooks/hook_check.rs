@@ -96,10 +96,10 @@ fn check_and_warn() -> Option<()> {
     let warning = match status() {
         HookStatus::Ok => return Some(()),
         HookStatus::Missing => {
-            "[contextdroid] /!\\ No hook installed — use `contextdroid integrations claude install`"
+            "[contextdroid] /!\\ No hook installed — use `contextdroid setup preview`, then `contextdroid setup apply`"
         }
         HookStatus::Outdated => {
-            "[contextdroid] /!\\ Hook outdated — use `contextdroid integrations claude install`"
+            "[contextdroid] /!\\ Hook outdated — use `contextdroid setup preview`, then `contextdroid setup apply`"
         }
     };
 
