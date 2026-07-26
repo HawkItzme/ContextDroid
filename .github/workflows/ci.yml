@@ -74,6 +74,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@42520bdb3cb59f71dae6f8557f7056cf3a46c898 # 1.91.0
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
       - run: cargo test --all --locked
+      - if: runner.os != 'Windows'
+        run: bash scripts/test-install.sh
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/test-install.ps1
 
   security:
     name: Security Scan

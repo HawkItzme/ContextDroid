@@ -21,7 +21,7 @@ output unchanged whenever parser confidence is low.
 
 ## Installation and availability
 
-Install the published alpha without Rust or a local build.
+Install the latest stable release without Rust or a local build.
 
 Linux and macOS:
 
@@ -35,27 +35,27 @@ Windows PowerShell:
 irm https://raw.githubusercontent.com/HawkItzme/ContextDroid/main/install.ps1 | iex
 ```
 
-Both installers select the current alpha, verify `SHA256SUMS`, reject unsafe archives, and
-verify the binary version before replacing an existing installation. Pin a release with
-`CONTEXTDROID_VERSION`, or download and inspect the installer before running it if preferred.
+Both installers resolve the latest stable GitHub release, verify `SHA256SUMS`, reject unsafe
+redirects and archives, verify the exact binary version, and roll back a failed replacement.
+Pin any exact release with `CONTEXTDROID_VERSION`. A custom `CONTEXTDROID_RELEASE_BASE` requires
+that explicit version.
 
 Agent integration is a separate explicit operation:
 
 ```text
-contextdroid integrations claude preview
-contextdroid integrations cursor preview --cursor-schema-version 1
-contextdroid integrations codex preview --root .
-
-contextdroid integrations claude install
-contextdroid integrations cursor install --cursor-schema-version 1
-contextdroid integrations codex install --root .
+contextdroid setup detect
+contextdroid setup preview
+contextdroid setup apply --yes
+contextdroid setup status
+contextdroid setup uninstall --yes
 ```
 
-Use the corresponding `status` or `uninstall` action to inspect or remove only the managed
-ContextDroid entry. Installation modifies agent or project configuration; preview and status
-do not write.
+Use repeatable `--only <claude|codex|cursor>` to narrow the selection. Cursor requires
+`--include-experimental`. Detect, preview, and status never write; apply is transactional and
+uninstall removes only managed ContextDroid entries. The older `integrations` commands remain
+available throughout 0.1.x.
 
-Direct archives, DEB, and RPM packages are also attached to the GitHub prerelease. Homebrew is
+Direct archives, DEB, and RPM packages are also attached to the GitHub release. Homebrew is
 deferred. See [INSTALL.md](INSTALL.md) for pinned, manual, rollback, and source-build options.
 
 ## Direct usage
@@ -143,28 +143,21 @@ billing.
 
 ## Agent integrations
 
-The integration commands are also listed here for reference. Preview first:
+The setup commands are also listed here for reference:
 
 ```text
-contextdroid integrations claude preview
-contextdroid integrations cursor preview --cursor-schema-version 1
-contextdroid integrations codex preview --root .
+contextdroid setup detect
+contextdroid setup preview
+contextdroid setup apply --yes
+contextdroid setup status
+contextdroid setup uninstall --yes
 ```
 
-Install explicitly after reviewing the preview:
-
-```text
-contextdroid integrations claude install
-contextdroid integrations cursor install --cursor-schema-version 1
-contextdroid integrations codex install --root .
-```
-
-Replace `install` with `status` or `uninstall` as needed. Claude Code on Linux is the
-supported alpha candidate and uses `PreToolUse` input replacement. Cursor schema version 1
-is experimental until cross-platform release-commit smoke is recorded. Codex receives a
+Claude Code on Linux is supported and uses `PreToolUse` input replacement. Cursor schema version 1
+is experimental and opt-in. Codex receives a
 bounded managed `AGENTS.md` instruction block; ContextDroid does not claim transparent Codex
 command interception. Lifecycle tests require unrelated settings to be preserved and operations
-to be idempotent.
+to be idempotent. Direct `contextdroid integrations <agent> ...` remains compatible in 0.1.x.
 
 ## RTK migration
 
@@ -188,7 +181,7 @@ pipelines, redirected commands, or binary output. Unknown or malformed output is
 
 ## Benchmarks
 
-ContextDroid does not reuse RTK percentage claims. The alpha corpus measures estimated raw
+ContextDroid does not reuse RTK percentage claims. The v0.1 corpus measures estimated raw
 and returned tokens, preservation, confidence, fallback, recovery/rerun behavior, latency,
 and memory. Current results and the methodology are in
 [docs/BENCHMARKS.md](docs/BENCHMARKS.md). Correctness gates block release; compression
@@ -197,26 +190,26 @@ percentage does not.
 ## Limitations
 
 - Android diagnostic formats vary across Gradle, AGP, Kotlin, devices, and OEMs.
-- The alpha parser corpus is synthetic and must expand with redistributable real-world
+- The parser corpus is primarily synthetic and must expand with redistributable real-world
   samples.
 - Durable optimized output is returned after raw capture completes; live transformed
   streaming remains future work.
 - Release archives are verified on their native Linux, macOS, and Windows CI runners.
 - Android parser coverage combines redistributable fixtures, an Android Gradle smoke project,
   and a pinned public validation project; device and OEM formats will continue to expand.
-- Homebrew remains deferred and is not required for direct alpha installation.
+- Homebrew remains deferred and is not required for direct stable installation.
 
 ## Troubleshooting and uninstall
 
 Use `contextdroid show <RUN_ID> --raw` whenever a summary appears incomplete. Select
 `android-only` to disable general inherited automatic coverage, or invoke the original
-command directly. Remove agent integration state with `contextdroid integrations <agent>
-uninstall`. Delete the binary and the platform ContextDroid data directory only after
+command directly. Remove managed integration state with `contextdroid setup uninstall --yes`.
+Delete the binary and the platform ContextDroid data directory only after
 retaining any raw runs you need.
 
 ## Contributing
 
-Read [AGENTS.md](AGENTS.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and
+Read [CONTRIBUTING.md](CONTRIBUTING.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and
 [docs/SAFETY_CONTRACT.md](docs/SAFETY_CONTRACT.md). Repository builds, tests, diffs, logs,
 and diagnostics must be run raw—never through RTK or ContextDroid. Every parser/rewrite
 change needs raw fixtures, semantic assertions, malformed/unknown cases, exit parity,
