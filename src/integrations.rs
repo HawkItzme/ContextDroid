@@ -140,8 +140,12 @@ fn restore_setup_files(snapshots: &[(PathBuf, Option<Vec<u8>>)]) -> Result<()> {
     for (path, original) in snapshots.iter().rev() {
         match original {
             Some(bytes) => crate::product::write_atomic(path, bytes)?,
-            None if path.exists() => fs::remove_file(path)
-                .with_context(|| format!("failed to roll back {}", path.display()))?,
+            None if path.exists() => {
+                // nosemgrep: filesystem-deletion -- rollback removes only a selected integration
+                // file proven absent in the preflight snapshot and created by this transaction.
+                fs::remove_file(path)
+                    .with_context(|| format!("failed to roll back {}", path.display()))?
+            }
             None => {}
         }
     }
