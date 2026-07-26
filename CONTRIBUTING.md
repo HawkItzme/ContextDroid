@@ -18,10 +18,11 @@ code copied from sources with incompatible licenses.
 1. Open an issue for changes that alter public behavior, safety policy, storage, integrations,
    or release packaging.
 2. Branch from `develop` after the ContextDroid branch migration is complete. During alpha
-   readiness, use the product branch named in [AGENTS.md](AGENTS.md).
+   readiness, use a short-lived topic branch from the current protected development branch.
 3. Keep the change focused and use Conventional Commit subjects.
 4. Add tests before implementation for parser, classifier, rewrite, or bug-fix work.
-5. Update `.agent/EXEC_PLAN.md` for architectural decisions or release-gate work.
+5. Record lasting architectural decisions in public documentation; keep personal execution notes
+   outside Git.
 
 Pull requests must target `develop`. Promotion to `main` and release tagging are maintainer-only
 operations performed from an exact reviewed commit.
