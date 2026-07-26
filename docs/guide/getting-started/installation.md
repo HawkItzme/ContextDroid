@@ -56,7 +56,7 @@ Cursor is experimental and requires explicit opt-in.
 Direct archives, DEB, and RPM packages are attached to the GitHub release. Homebrew requires a
 selected downstream tap and separate install/uninstall validation, so it is deferred.
 
-Homebrew is excluded from v0.1.0 without blocking direct GitHub installation.
+Homebrew is excluded throughout v0.1.x without blocking direct GitHub installation.
 
 See the repository [README](../../../README.md), [integrations guide](../../INTEGRATIONS.md),
 and [release checklist](../../RELEASE_CHECKLIST.md).

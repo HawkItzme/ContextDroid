@@ -65,13 +65,13 @@ fn release_targets_match_workflow_installer_and_documentation() {
 }
 
 #[test]
-fn release_metadata_targets_stable_v0_1_0_without_automatic_publication() {
+fn release_metadata_targets_stable_v0_1_1_without_automatic_publication() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let manifest = fs::read_to_string(root.join(".release-please-manifest.json")).unwrap();
     let workflow = fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
 
-    assert!(manifest.contains(r#""0.1.0""#));
-    assert!(workflow.contains("default: v0.1.0"));
+    assert!(manifest.contains(r#""0.1.1""#));
+    assert!(workflow.contains("default: v0.1.1"));
     assert!(workflow.contains("default: false"));
     assert!(workflow.contains("docs/releases/$TAG.md"));
     assert!(workflow.contains("PRERELEASE"));
