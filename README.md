@@ -1,14 +1,47 @@
-# ContextDroid
+<p align="center">
+  <img src="docs/assets/contextdroid-banner.png" alt="ContextDroid — Android-aware command-output optimization">
+</p>
 
-![ContextDroid — Android-aware command-output optimization](docs/assets/contextdroid-banner.png)
+<p align="center">
+  <strong>Turn log chaos into actionable evidence.</strong>
+</p>
 
-ContextDroid is an independently maintained, Android-focused command-output optimizer
-derived from RTK. It extracts useful Android diagnostics for AI coding agents while securely
-staging complete stdout and stderr before parsing. Failed optimized runs are retained for exact
-recovery; successful staging is deleted by default.
+<p align="center">
+  <a href="https://github.com/HawkItzme/ContextDroid/actions/workflows/ci.yml"><img src="https://github.com/HawkItzme/ContextDroid/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/HawkItzme/ContextDroid/releases/latest"><img src="https://img.shields.io/github/v/release/HawkItzme/ContextDroid" alt="Latest release"></a>
+  <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="Apache License 2.0"></a>
+</p>
 
-ContextDroid is not affiliated with or endorsed by `rtk-ai`. The upstream provenance and
-pinned commit are recorded in [UPSTREAM.md](UPSTREAM.md); third-party notices are in
+<p align="center">
+  <a href="#quick-start">Quick start</a> &bull;
+  <a href="#what-contextdroid-understands">Android coverage</a> &bull;
+  <a href="#profiles">Profiles</a> &bull;
+  <a href="#raw-recovery">Raw recovery</a> &bull;
+  <a href="#agent-integrations">Agent integrations</a> &bull;
+  <a href="INSTALL.md">Installation guide</a>
+</p>
+
+ContextDroid is an independently maintained, Android-focused command-output optimizer derived
+from RTK. It turns verbose Gradle, compiler, ADB, and Logcat output into compact diagnostics for
+AI coding agents while preserving the evidence needed to investigate failures.
+
+Complete stdout and stderr are securely staged before parsing. Failed optimized runs are retained
+for exact recovery; successful staging is deleted by default. Low-confidence, unknown, structured,
+or unsafe output falls back to raw output rather than being guessed at.
+
+## At a glance
+
+| Area | ContextDroid behavior |
+|---|---|
+| Primary focus | Android builds, tests, devices, crashes, ANRs, and runtime diagnostics |
+| Default policy | Conservative `contextdroid-safe` profile with explicit hard stops |
+| Failure safety | Original exit behavior, critical fields, causes, and source locations preserved |
+| Recovery | Every compact failure includes a run ID and raw-output retrieval command |
+| Privacy | Local analytics only; no remote telemetry client or consent flow |
+| Distribution | Checksum-verifying installers and release archives; no local Rust build required |
+
+ContextDroid is not affiliated with or endorsed by `rtk-ai`. Upstream provenance and the pinned
+RTK commit are recorded in [UPSTREAM.md](UPSTREAM.md); third-party notices are in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Why Android needs a conservative tool
@@ -19,7 +52,29 @@ root cause may be separated from the failing task, source location, or `Caused b
 ContextDroid captures raw output first, extracts typed diagnostics second, and returns raw
 output unchanged whenever parser confidence is low.
 
-## Installation and availability
+## How it works
+
+```text
+Android command
+      |
+      v
+Profile-aware safety classifier ---- unsafe or unsupported ----> raw command unchanged
+      |
+      v
+Execute and securely stage complete stdout/stderr
+      |
+      v
+Parse typed diagnostics and validate preservation invariants
+      |
+      +---- high confidence ----> compact semantic evidence + recovery command
+      +---- medium confidence --> evidence + relevant raw context
+      `---- low confidence -----> raw output unchanged
+```
+
+Raw output is staged before any lossy transformation. Compact output also reports meaningful
+omissions, such as successful Gradle tasks or classified framework frames that were collapsed.
+
+## Quick start
 
 Install the latest stable release without Rust or a local build.
 
@@ -34,6 +89,27 @@ Windows PowerShell:
 ```powershell
 irm https://raw.githubusercontent.com/HawkItzme/ContextDroid/main/install.ps1 | iex
 ```
+
+Use the raw URL exactly as shown; Markdown link syntax such as `[URL](URL)` is not valid
+PowerShell input.
+
+Verify the installation and run an Android build:
+
+```text
+contextdroid --version
+contextdroid gradlew assembleDebug
+```
+
+On a compact failure, inspect the preserved output:
+
+```text
+contextdroid show <RUN_ID> --raw
+```
+
+ContextDroid works directly from the terminal. Agent integration is optional and always a separate,
+explicit setup operation.
+
+## Installation and availability
 
 Both installers resolve the latest stable GitHub release, verify `SHA256SUMS`, reject unsafe
 redirects and archives, verify the exact binary version, and roll back a failed replacement.
@@ -58,6 +134,23 @@ available throughout 0.1.x.
 Direct archives, DEB, and RPM packages are also attached to the GitHub release. Homebrew is
 deferred. See [INSTALL.md](INSTALL.md) for pinned, manual, rollback, and source-build options.
 
+## What ContextDroid understands
+
+| Diagnostic family | Examples of preserved evidence |
+|---|---|
+| Gradle and AGP | Failing task, module, variant, exception, dependency coordinates |
+| Kotlin and Java | Exact error, file, line, column, compiler category |
+| KSP, KAPT, and Compose | Processor/compiler failure, source location, cause chain |
+| Android resources | AAPT2, resource merge/link conflicts, exact resource identifiers |
+| Manifest merger | Conflicting manifests, attributes, locations, suggested resolution |
+| D8 and R8 | Duplicate classes, shrinker failures, missing rules and references |
+| Tests and lint | Failed test, expected/actual values, source frames, lint severity |
+| ADB | Devices, install/uninstall, selected `am`, `pm`, and tested `dumpsys` output |
+| Logcat | Crash, ANR, StrictMode, Binder/process death, coroutine and native references |
+
+Unsupported Gradle tasks and ADB subcommands pass through unchanged. Binary streams—including
+screenshots, APK payloads, bugreport archives, and push/pull byte streams—are never transformed.
+
 ## Direct usage
 
 ```text
@@ -74,10 +167,11 @@ compatibility commands explicitly only when you understand their output behavior
 
 ## Profiles
 
-- `contextdroid-safe` is the default. It automatically considers verified Android commands
-  and narrow human-readable Git status/log forms.
-- `android-only` automatically considers only verified Gradle, ADB, and Logcat commands.
-- `rtk-compatible` opts into inherited coverage, but cannot bypass universal hard stops.
+| Profile | Intended use | Automatic consideration |
+|---|---|---|
+| `contextdroid-safe` | Recommended default | Verified Android commands and narrow human-readable Git status/log forms |
+| `android-only` | Android-only teams or strict projects | Verified Gradle, ADB, and Logcat commands only |
+| `rtk-compatible` | Opt-in inherited compatibility | Broader inherited coverage, still bounded by universal hard stops |
 
 Select the rewrite profile before the subcommand, for example
 `contextdroid --profile android-only rewrite "./gradlew assembleDebug"`. The `gain` and
@@ -88,11 +182,11 @@ unknown commands, and broad discovery/read operations pass through unchanged.
 
 ## Output modes
 
-- `lossless` removes no unique diagnostic facts.
-- `balanced` is the default and collapses classified chatter while retaining failure
-  evidence.
-- `aggressive` must be selected explicitly and is never automatic for low- or
-  medium-confidence failures.
+| Mode | Behavior | When to use it |
+|---|---|---|
+| `lossless` | Removes no unique diagnostic facts | Audits, unfamiliar failures, or maximum context |
+| `balanced` | Collapses classified chatter while retaining failure evidence | Default day-to-day use |
+| `aggressive` | Produces the smallest actionable result with raw recovery | Explicitly selected, well-understood output |
 
 Verbose flags such as `--stacktrace`, `--full-stacktrace`, `--info`, `--debug`, and
 `--scan` select raw/lossless behavior.
@@ -143,7 +237,8 @@ billing.
 
 ## Agent integrations
 
-The setup commands are also listed here for reference:
+ContextDroid keeps installation and agent integration separate. Preview the exact managed change
+before applying it:
 
 ```text
 contextdroid setup detect
@@ -153,11 +248,32 @@ contextdroid setup status
 contextdroid setup uninstall --yes
 ```
 
-Claude Code on Linux is supported and uses `PreToolUse` input replacement. Cursor schema version 1
-is experimental and opt-in. Codex receives a
-bounded managed `AGENTS.md` instruction block; ContextDroid does not claim transparent Codex
-command interception. Lifecycle tests require unrelated settings to be preserved and operations
-to be idempotent. Direct `contextdroid integrations <agent> ...` remains compatible in 0.1.x.
+| Agent | Status | Integration method |
+|---|---|---|
+| Claude Code on Linux | Supported | `PreToolUse` input replacement |
+| Codex | Supported, guidance-only | Bounded managed `AGENTS.md` instructions |
+| Cursor | Experimental, opt-in | Cursor hooks schema v1 |
+
+Codex integration does not claim transparent command interception. Cursor requires
+`--only cursor --include-experimental`. Lifecycle tests require unrelated settings to be
+preserved and operations to be idempotent. Direct `contextdroid integrations <agent> ...`
+remains compatible throughout 0.1.x.
+
+## ContextDroid and RTK
+
+ContextDroid retains useful RTK infrastructure but makes different product choices:
+
+| | ContextDroid | RTK |
+|---|---|---|
+| Product scope | Android-focused diagnostics and evidence preservation | Broad general-purpose CLI output optimization |
+| Default rewrite posture | Conservative, confidence-gated, Android-aware | Broad command-family coverage |
+| Unknown or unsafe output | Raw pass-through | Depends on RTK command/filter behavior |
+| Raw recovery | Structured run store for compact failures | RTK-specific recovery mechanisms |
+| Analytics | Local-only, including confidence and recovery quality proxies | RTK analytics model |
+| Compatibility | Explicit `rtk-compatible` profile; no `rtk` alias | Native RTK behavior |
+
+ContextDroid is pinned to the RTK version and commit documented in [UPSTREAM.md](UPSTREAM.md);
+current RTK documentation may describe features added after that pin.
 
 ## RTK migration
 
@@ -206,6 +322,26 @@ Use `contextdroid show <RUN_ID> --raw` whenever a summary appears incomplete. Se
 command directly. Remove managed integration state with `contextdroid setup uninstall --yes`.
 Delete the binary and the platform ContextDroid data directory only after
 retaining any raw runs you need.
+
+| Symptom | Recommended action |
+|---|---|
+| Summary appears incomplete | `contextdroid show <RUN_ID> --raw` |
+| Need only Android rewriting | Select the `android-only` profile |
+| Command should not be transformed | Run it directly or use a safe-profile exclusion |
+| Agent setup is unexpected | Run `contextdroid setup status`, then preview/uninstall managed entries |
+| Installation or PATH problem | Follow [INSTALL.md](INSTALL.md) and verify `contextdroid --version` |
+
+## Documentation map
+
+| Document | Purpose |
+|---|---|
+| [INSTALL.md](INSTALL.md) | Install, pin, verify, roll back, and uninstall |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Runtime pipeline and system boundaries |
+| [docs/SAFETY_CONTRACT.md](docs/SAFETY_CONTRACT.md) | Preservation invariants and fallback rules |
+| [docs/FILTER_MATRIX.md](docs/FILTER_MATRIX.md) | Supported, explicit-only, and pass-through commands |
+| [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Corpus, methodology, measurements, and limitations |
+| [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) | Agent setup lifecycle and platform support |
+| [docs/MIGRATION.md](docs/MIGRATION.md) | Explicit migration from recognized RTK state |
 
 ## Contributing
 

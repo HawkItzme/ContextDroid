@@ -18,6 +18,14 @@ Assert-True (Test-ContextDroidVersion -Version 'v1.2.3-alpha.1') 'explicit prere
 Assert-True (-not (Test-ContextDroidVersion -Version '../v1.2.3')) 'unsafe version rejected'
 
 try {
+    $handler = [Net.Http.HttpClientHandler]::new()
+    $handler.Dispose()
+    Assert-True $true 'System.Net.Http is available in Windows PowerShell 5.1'
+} catch {
+    throw "FAIL: System.Net.Http is unavailable after loading install.ps1: $($_.Exception.Message)"
+}
+
+try {
     Resolve-ContextDroidVersion -RequestedVersion '' -CustomBase 'C:\mirror'
     throw 'FAIL: custom base without explicit version was accepted'
 } catch {

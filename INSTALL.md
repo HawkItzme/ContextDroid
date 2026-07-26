@@ -115,7 +115,7 @@ or deletion because they can contain sensitive command output.
 
 ## Current limitations
 
-- Homebrew is deferred for v0.1.0.
+- Homebrew remains deferred throughout v0.1.x.
 - Cursor remains experimental.
 - Codex is guidance-only.
 - Android device validation requires a locally configured SDK/device and is not implied by

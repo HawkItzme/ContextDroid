@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+Add-Type -AssemblyName System.Net.Http
 
 $script:Repository = 'HawkItzme/ContextDroid'
 $script:Asset = 'contextdroid-x86_64-pc-windows-msvc.zip'

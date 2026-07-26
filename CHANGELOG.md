@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1] - 2026-07-26
+
+- Fixed the checksum-verifying installer on Windows PowerShell 5.1 by explicitly loading
+  `System.Net.Http`, with a regression contract for the download path.
+- Improved README onboarding with a direct quick start, Android coverage and product comparison
+  tables, the raw-first execution model, agent support, troubleshooting, and documentation links.
+
 ## [0.1.0] - 2026-07-26
 
 - Unified Android and inherited general command analytics in one privacy-safe schema with typed
