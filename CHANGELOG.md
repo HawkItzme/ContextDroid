@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — stabilization
+## [0.1.0] - 2026-07-26
 
 - Unified Android and inherited general command analytics in one privacy-safe schema with typed
   rolling filters, post-filter `--last`, canonical session and quality views, and idempotent legacy
@@ -10,8 +10,15 @@
 - Aligned Gradle/ADB safe rewriting, token-aware RTK compatibility replacement, conflict-safe RTK
   hook migration, manifest-driven fixture contracts, failure-only raw retention, and secure staging.
 - Added deterministic docs/help validation plus Linux Android and Claude integration smoke jobs.
+- Added latest-stable checksum-verifying installers with explicit pinning, redirect and archive
+  validation, plus transactional binary and PATH rollback.
+- Added generic transactional `setup` detection, preview, apply, status, and uninstall while
+  retaining the 0.1.x integration commands.
+- Removed internal agent workspaces and private release-planning artifacts from the public tree.
+- Made the protected release workflow stable-aware while retaining private-draft verification and
+  opt-in publication.
 
-## [0.1.0-alpha.1] - Unreleased
+## [0.1.0-alpha.1] - 2026-07-17
 
 - Establish ContextDroid as an independently maintained Android-focused RTK downstream.
 - Add conservative profiles, universal rewrite hard stops, and raw fallback.

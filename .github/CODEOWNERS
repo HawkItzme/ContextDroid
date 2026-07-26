@@ -1,4 +1,4 @@
-# CODEOWNERS is advisory for the single-maintainer first alpha. Require it after a second maintainer joins.
+# CODEOWNERS documents review responsibility; branch rules define required approvals.
 /src/core/runner.rs @HawkItzme
 /src/core/stream.rs @HawkItzme
 /src/core/run_store.rs @HawkItzme

@@ -42,4 +42,4 @@ runs after evidence validation; incomplete or non-smaller semantic output replay
 ## Decisions
 
 Major decisions, deviations, verification results, and remaining risks live in
-`.agent/EXEC_PLAN.md`.
+public architecture documentation and pull-request history.

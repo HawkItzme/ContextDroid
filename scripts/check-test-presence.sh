@@ -61,7 +61,7 @@ echo ""
 
 if [ "$EXIT_CODE" -ne 0 ]; then
     echo "check-test-presence: FAILED — add tests before merging."
-    echo "See .claude/rules/cli-testing.md for the testing guide."
+    echo "See docs/contributing/TESTING.md for the testing guide."
 else
     echo "check-test-presence: all filter modules have tests — OK"
 fi

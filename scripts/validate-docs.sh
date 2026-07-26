@@ -2,10 +2,10 @@
 set -euo pipefail
 
 required=(
-  README.md UPSTREAM.md THIRD_PARTY_NOTICES.md CHANGELOG.md CLAUDE.md
-  docs/ARCHITECTURE.md docs/CONTEXTDROID_PRODUCT_SPEC.md docs/SAFETY_CONTRACT.md
+  README.md UPSTREAM.md THIRD_PARTY_NOTICES.md CHANGELOG.md CONTRIBUTING.md
+  docs/ARCHITECTURE.md docs/SAFETY_CONTRACT.md
   docs/FILTER_MATRIX.md docs/BENCHMARKS.md docs/INTEGRATIONS.md
-  docs/MIGRATION.md docs/RELEASE_CHECKLIST.md .agent/EXEC_PLAN.md
+  docs/MIGRATION.md docs/RELEASE_CHECKLIST.md docs/contributing/TESTING.md
 )
 
 for file in "${required[@]}"; do
@@ -19,9 +19,14 @@ grep -q "snapshot" docs/FILTER_MATRIX.md
 grep -q "migrate rtk" docs/MIGRATION.md
 bash scripts/check-stale-brand.sh
 
-if grep -q "prefer .*rtk" CLAUDE.md; then
-  echo "CLAUDE.md must not tell contributors to compress repository commands" >&2
-  exit 1
-fi
+for internal in .agent .agents .claude .codex .rtk AGENTS.md CLAUDE.md \
+  .github/copilot-instructions.md .github/hooks/rtk-rewrite.json \
+  docs/PILOT.md docs/validation/INTERNAL_ANDROID_PROJECT.md \
+  docs/maintainers/MAINTAINERS_APPLY.md; do
+  if test -f "$internal" || { test -d "$internal" && find "$internal" -type f -print -quit | grep -q .; }; then
+    echo "internal development artifact must not be tracked: $internal" >&2
+    exit 1
+  fi
+done
 
 echo "ContextDroid documentation contract passed"

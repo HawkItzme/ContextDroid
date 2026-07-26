@@ -49,6 +49,15 @@ enum IntegrationAction {
     Uninstall,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, ValueEnum)]
+enum SetupCliAction {
+    Detect,
+    Preview,
+    Apply,
+    Status,
+    Uninstall,
+}
+
 #[derive(Parser)]
 #[command(
     name = product::BINARY_NAME,
@@ -637,6 +646,24 @@ enum Commands {
         /// Cursor hooks schema version; only verified version 1 is accepted
         #[arg(long)]
         cursor_schema_version: Option<u32>,
+    },
+
+    /// Detect and configure supported agent integrations as one transaction
+    Setup {
+        #[arg(value_enum)]
+        action: SetupCliAction,
+        /// Limit setup to one or more agents
+        #[arg(long, value_enum, action = clap::ArgAction::Append)]
+        only: Vec<IntegrationAgent>,
+        /// Allow explicitly selected experimental integrations
+        #[arg(long)]
+        include_experimental: bool,
+        /// Project root used for project-scoped guidance
+        #[arg(long, default_value = ".")]
+        project_root: PathBuf,
+        /// Confirm apply or uninstall without an interactive prompt
+        #[arg(long)]
+        yes: bool,
     },
 
     /// Explicit migration from an RTK installation
@@ -1350,6 +1377,7 @@ const RTK_META_COMMANDS: &[&str] = &[
     "privacy",
     "data",
     "integrations",
+    "setup",
     "migrate",
     "rewrite",
     "smart",
@@ -2441,6 +2469,97 @@ fn run_cli() -> Result<i32> {
             0
         }
 
+        Commands::Setup {
+            action,
+            only,
+            include_experimental,
+            project_root,
+            yes,
+        } => {
+            let setup_action = match action {
+                SetupCliAction::Detect => integrations::SetupAction::Detect,
+                SetupCliAction::Preview => integrations::SetupAction::Preview,
+                SetupCliAction::Apply => integrations::SetupAction::Apply,
+                SetupCliAction::Status => integrations::SetupAction::Status,
+                SetupCliAction::Uninstall => integrations::SetupAction::Uninstall,
+            };
+            let only = only
+                .into_iter()
+                .map(|agent| match agent {
+                    IntegrationAgent::Claude => integrations::Agent::Claude,
+                    IntegrationAgent::Cursor => integrations::Agent::Cursor,
+                    IntegrationAgent::Codex => integrations::Agent::Codex,
+                })
+                .collect();
+            let changes_requested = matches!(
+                setup_action,
+                integrations::SetupAction::Apply | integrations::SetupAction::Uninstall
+            );
+            let confirmed = if changes_requested && !yes {
+                use std::io::Write;
+                print!(
+                    "{} selected ContextDroid integrations? [y/N] ",
+                    if setup_action == integrations::SetupAction::Apply {
+                        "Apply"
+                    } else {
+                        "Uninstall"
+                    }
+                );
+                std::io::stdout().flush()?;
+                let mut answer = String::new();
+                std::io::stdin().read_line(&mut answer)?;
+                matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+            } else {
+                yes
+            };
+            let report = integrations::setup(integrations::SetupOptions {
+                action: setup_action,
+                only,
+                include_experimental,
+                project_root,
+                confirmed,
+                root_override: None,
+                #[cfg(test)]
+                fail_after_writes: None,
+            })?;
+            for adapter in &report.adapters {
+                let name = match adapter.agent {
+                    integrations::Agent::Claude => "claude",
+                    integrations::Agent::Cursor => "cursor",
+                    integrations::Agent::Codex => "codex",
+                };
+                match setup_action {
+                    integrations::SetupAction::Preview => {
+                        println!(
+                            "--- {name} [{}] {} ---\n{}",
+                            adapter.tier,
+                            adapter.path.display(),
+                            adapter.preview
+                        );
+                    }
+                    _ => println!(
+                        "{name} [{}]: {}; {}; conflicts={}",
+                        adapter.tier,
+                        if adapter.detected {
+                            "detected"
+                        } else {
+                            "not detected"
+                        },
+                        if adapter.installed {
+                            "installed"
+                        } else {
+                            "not installed"
+                        },
+                        adapter.rtk_conflicts
+                    ),
+                }
+            }
+            if changes_requested {
+                println!("{} integration file(s) updated", report.changed);
+            }
+            0
+        }
+
         Commands::Migrate { command } => match command {
             ProductMigrationCommands::Rtk {
                 source_dir,
@@ -3377,6 +3496,36 @@ mod tests {
                 "Meta-command {:?} should parse successfully",
                 args
             );
+        }
+    }
+
+    #[test]
+    fn test_setup_apply_options_parse() {
+        let cli = Cli::try_parse_from([
+            "contextdroid",
+            "setup",
+            "apply",
+            "--only",
+            "claude",
+            "--only",
+            "codex",
+            "--project-root",
+            ".",
+            "--yes",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Setup {
+                action, only, yes, ..
+            } => {
+                assert_eq!(action, SetupCliAction::Apply);
+                assert_eq!(
+                    only,
+                    vec![IntegrationAgent::Claude, IntegrationAgent::Codex]
+                );
+                assert!(yes);
+            }
+            _ => panic!("Expected Setup command"),
         }
     }
 

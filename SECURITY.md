@@ -16,10 +16,9 @@ reporter after a fix or mitigation is available.
 
 ## Supported versions
 
-Before the first public alpha, only the current head of the active product branch is maintained.
-After `v0.1.0-alpha.1`, the latest published prerelease is supported on a best-effort basis.
-Older prereleases may be asked to upgrade before investigation. This policy will be revised when
-a stable release line exists.
+The latest stable 0.1.x release is supported. Prereleases and older stable builds may be asked to
+upgrade before investigation unless the report is specifically about a regression in the current
+release.
 
 ## Security model
 

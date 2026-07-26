@@ -1,7 +1,7 @@
 # Installing ContextDroid
 
-The supported alpha distribution is the GitHub prerelease `v0.1.0-alpha.1`. Branch artifacts and
-inherited RTK packages are not ContextDroid releases.
+The supported distribution is the latest stable GitHub release. Branch artifacts, prereleases
+unless explicitly pinned, and inherited RTK packages are not stable ContextDroid releases.
 
 ## Quick install
 
@@ -20,7 +20,9 @@ irm https://raw.githubusercontent.com/HawkItzme/ContextDroid/main/install.ps1 | 
 The Windows installer uses `%LOCALAPPDATA%\ContextDroid\bin` and adds that directory to the
 current-user `PATH` once. Set `CONTEXTDROID_NO_PATH_UPDATE=1` to opt out. Both installers support
 `CONTEXTDROID_VERSION`, `CONTEXTDROID_INSTALL_DIR`, and `CONTEXTDROID_RELEASE_BASE`, verify the
-archive checksum and binary version, and leave an existing installation intact on failure.
+archive checksum and binary version, reject unsafe redirects and archive entries, and roll back the
+binary and Windows user `PATH` on failure. Without `CONTEXTDROID_VERSION`, the installer follows
+GitHub's latest stable release. A custom release base requires an explicit version.
 
 ## Build from source
 
@@ -65,23 +67,23 @@ release installer locally provides the same checksum-verifying behavior.
 The binary must already be on `PATH`. Preview every mutation:
 
 ```text
-contextdroid integrations claude preview
-contextdroid integrations cursor preview --cursor-schema-version 1
-contextdroid integrations codex preview --root .
+contextdroid setup detect
+contextdroid setup preview
 ```
 
 Then install, inspect, or remove the selected integration:
 
 ```text
-contextdroid integrations <claude|cursor|codex> install
-contextdroid integrations <claude|cursor|codex> status
-contextdroid integrations <claude|cursor|codex> uninstall
+contextdroid setup apply --yes
+contextdroid setup status
+contextdroid setup uninstall --yes
 ```
 
-Claude Code on Linux is the supported alpha candidate. Cursor schema v1 is experimental until
-its cross-platform lifecycle smoke is green on the release commit. Codex installation adds a
+Claude Code on Linux is supported. Cursor schema v1 is experimental and requires both
+`--only cursor` and `--include-experimental`. Codex setup adds a
 bounded `AGENTS.md` guidance block only; it does not intercept shell commands transparently.
-All lifecycle operations are designed to preserve unrelated settings and be idempotent.
+All lifecycle operations preserve unrelated settings and are idempotent. The legacy
+`contextdroid integrations` lifecycle remains available throughout 0.1.x.
 
 ## Migrating from RTK
 
@@ -113,8 +115,8 @@ or deletion because they can contain sensitive command output.
 
 ## Current limitations
 
-- Homebrew is deferred for the first alpha.
-- Cursor remains experimental until its stated release gates pass.
+- Homebrew is deferred for v0.1.0.
+- Cursor remains experimental.
 - Codex is guidance-only.
 - Android device validation requires a locally configured SDK/device and is not implied by
   installing the binary.

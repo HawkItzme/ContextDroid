@@ -65,18 +65,21 @@ fn release_targets_match_workflow_installer_and_documentation() {
 }
 
 #[test]
-fn inherited_release_please_is_disabled_for_first_alpha() {
+fn release_metadata_targets_stable_v0_1_0_without_automatic_publication() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let manifest = fs::read_to_string(root.join(".release-please-manifest.json")).unwrap();
-    let cd = fs::read_to_string(root.join(".github/workflows/cd.yml")).unwrap();
+    let workflow = fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
 
-    assert!(manifest.contains("0.1.0-alpha.1"));
-    assert!(!cd.contains("release-please-action"));
-    assert!(cd.contains("first alpha is manual"));
+    assert!(manifest.contains(r#""0.1.0""#));
+    assert!(workflow.contains("default: v0.1.0"));
+    assert!(workflow.contains("default: false"));
+    assert!(workflow.contains("docs/releases/$TAG.md"));
+    assert!(workflow.contains("PRERELEASE"));
+    assert!(!workflow.contains("--notes-file docs/releases/v0.1.0-alpha.1.md"));
 }
 
 #[test]
-fn quick_install_contract_is_cross_platform_and_prerelease_safe() {
+fn quick_install_contract_resolves_latest_stable_and_supports_explicit_pins() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let manifest: Manifest = serde_json::from_str(
         &fs::read_to_string(root.join("release/targets.json")).expect("release target manifest"),
@@ -98,15 +101,26 @@ fn quick_install_contract_is_cross_platform_and_prerelease_safe() {
     assert!(windows.contains(&windows_target.asset));
 
     for installer in [&unix, &windows] {
-        assert!(installer.contains("v0.1.0-alpha.1"));
+        assert!(
+            !installer.contains("v0.1.0-alpha.1"),
+            "installers must not pin the old prerelease"
+        );
         assert!(installer.contains("CONTEXTDROID_VERSION"));
         assert!(installer.contains("CONTEXTDROID_INSTALL_DIR"));
         assert!(installer.contains("CONTEXTDROID_RELEASE_BASE"));
         assert!(installer.contains("SHA256SUMS"));
         assert!(installer.contains("checksum mismatch"));
+        assert!(
+            installer.contains("custom release base requires CONTEXTDROID_VERSION"),
+            "custom mirrors must be paired with an explicit version"
+        );
     }
 
-    assert!(!unix.contains("releases/latest"));
+    assert!(unix.contains("releases/latest"));
+    assert!(windows.contains("releases/latest"));
+    assert!(unix.contains("--proto '=https'"));
+    assert!(unix.contains("--max-redirs"));
+    assert!(windows.contains("MaximumRedirection"));
     assert!(!workflow.contains("macos-13"));
     assert!(!workflow.contains("sha256sum * > SHA256SUMS"));
     assert!(workflow.contains("release-manifest.json"));
@@ -171,4 +185,39 @@ fn public_unix_smoke_uses_the_installers_directory_variable() {
     assert!(workflow.contains("CONTEXTDROID_INSTALL_DIR: ${{ runner.temp }}/contextdroid-bin"));
     assert!(workflow.contains("\"$CONTEXTDROID_INSTALL_DIR/contextdroid\" --version"));
     assert!(!workflow.contains("\n          INSTALL_DIR:"));
+}
+
+#[test]
+fn public_tree_excludes_internal_agent_and_maintainer_artifacts() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for relative in [
+        ".agent",
+        ".agents",
+        ".claude",
+        ".codex",
+        ".rtk",
+        "AGENTS.md",
+        "CLAUDE.md",
+        ".github/copilot-instructions.md",
+        ".github/hooks/rtk-rewrite.json",
+        ".github/workflows/cd.yml",
+        ".github/workflows/next-release.yml",
+        "docs/CONTEXTDROID_PRODUCT_SPEC.md",
+        "docs/PILOT.md",
+        "docs/maintainers/MAINTAINERS_APPLY.md",
+        "docs/validation/INTERNAL_ANDROID_PROJECT.md",
+        "scripts/check-installation.sh",
+    ] {
+        let path = root.join(relative);
+        let contains_file = path.is_file()
+            || (path.is_dir()
+                && walkdir::WalkDir::new(&path)
+                    .into_iter()
+                    .filter_map(Result::ok)
+                    .any(|entry| entry.file_type().is_file()));
+        assert!(
+            !contains_file,
+            "internal artifact must not ship: {relative}"
+        );
+    }
 }
