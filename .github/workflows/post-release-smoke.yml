@@ -41,7 +41,7 @@ jobs:
           "$CONTEXTDROID_INSTALL_DIR/contextdroid" --version | grep -F "contextdroid ${EXPECTED_TAG#v}"
 
   install-windows:
-    name: Install Windows x86_64
+    name: Install Windows x86_64 (PowerShell 7)
     runs-on: windows-2025
     steps:
       - name: Install from the public release
@@ -54,6 +54,29 @@ jobs:
           $ErrorActionPreference = 'Stop'
           Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/HawkItzme/ContextDroid/main/install.ps1' -OutFile "$env:RUNNER_TEMP\install.ps1"
           & "$env:RUNNER_TEMP\install.ps1"
+          $version = & "$env:CONTEXTDROID_INSTALL_DIR\contextdroid.exe" --version
+          $expected = "contextdroid $($env:EXPECTED_TAG.TrimStart('v'))"
+          if ($version -notlike "*$expected*") {
+            throw "Unexpected installed version: $version"
+          }
+
+  install-windows-powershell51:
+    name: Install Windows x86_64 (PowerShell 5.1)
+    runs-on: windows-2025
+    steps:
+      - name: Install from the public release with the documented one-liner
+        shell: powershell
+        env:
+          CONTEXTDROID_INSTALL_DIR: ${{ runner.temp }}\contextdroid-bin-powershell51
+          CONTEXTDROID_NO_PATH_UPDATE: "1"
+          EXPECTED_TAG: ${{ inputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          if ($PSVersionTable.PSEdition -ne 'Desktop' -or $PSVersionTable.PSVersion.Major -ne 5) {
+            throw "Expected Windows PowerShell 5.1, got $($PSVersionTable.PSEdition) $($PSVersionTable.PSVersion)"
+          }
+          irm https://raw.githubusercontent.com/HawkItzme/ContextDroid/main/install.ps1 | iex
           $version = & "$env:CONTEXTDROID_INSTALL_DIR\contextdroid.exe" --version
           $expected = "contextdroid $($env:EXPECTED_TAG.TrimStart('v'))"
           if ($version -notlike "*$expected*") {
